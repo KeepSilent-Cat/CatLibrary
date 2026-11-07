@@ -39,13 +39,11 @@ const videoPreviewBehaviorOptions: Array<{
 export default function Settings() {
   const {
     resourceRoot,
-    logoSourcePath,
     relativeModeEnabled,
     previewMode,
     imagePreviewBehavior,
     videoPreviewBehavior,
     setResourceRoot,
-    setLogoSourcePath,
     setRelativeModeEnabled,
     setPreviewMode,
     setImagePreviewBehavior,
@@ -244,21 +242,6 @@ export default function Settings() {
               <p className="mt-3 text-xs leading-6 text-white/52">
                 点击后按下新的组合键（如 Ctrl+Shift+A）即可更换；Esc 取消录制。截图后拖动选择区域，
                 Enter 或点保存存入截图库。
-              </p>
-            </div>
-
-            <div className="glass-chip rounded-[24px] p-5">
-              <div className="flex items-center gap-2 text-sm font-medium text-white">
-                <ImagePlus className="h-4 w-4 text-sky-100" />
-                <span>Logo 来源路径</span>
-              </div>
-              <input
-                value={logoSourcePath}
-                onChange={(event) => setLogoSourcePath(event.target.value)}
-                className="mt-4 w-full rounded-2xl border border-white/18 bg-white/10 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-white/38 focus:bg-white/14"
-              />
-              <p className="mt-3 text-xs leading-6 text-white/52">
-                当前界面已接入项目内复制好的 ZeroCat 图片，这里先保留可调整入口。
               </p>
             </div>
 

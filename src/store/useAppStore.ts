@@ -27,7 +27,6 @@ export type ScreenshotTarget =
 
 interface AppState {
   resourceRoot: string;
-  logoSourcePath: string;
   relativeModeEnabled: boolean;
   previewMode: PreviewMode;
   imagePreviewBehavior: ImagePreviewBehavior;
@@ -69,7 +68,6 @@ interface AppState {
   chapterDelay: number;
   autoSkipPages: number;
   setResourceRoot: (value: string) => void;
-  setLogoSourcePath: (value: string) => void;
   setRelativeModeEnabled: (value: boolean) => void;
   setPreviewMode: (value: PreviewMode) => void;
   setImagePreviewBehavior: (value: ImagePreviewBehavior) => void;
@@ -111,7 +109,6 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       resourceRoot: "d:\\CatLibrary\\library",
-      logoSourcePath: "",
       relativeModeEnabled: true,
       previewMode: "hover",
       imagePreviewBehavior: "loop",
@@ -140,7 +137,6 @@ export const useAppStore = create<AppState>()(
       chapterDelay: 3,
       autoSkipPages: 0,
       setResourceRoot: (value) => set({ resourceRoot: value }),
-      setLogoSourcePath: (value) => set({ logoSourcePath: value }),
       setRelativeModeEnabled: (value) => set({ relativeModeEnabled: value }),
       setPreviewMode: (value) => set({ previewMode: value }),
       setImagePreviewBehavior: (value) => set({ imagePreviewBehavior: value }),
@@ -217,7 +213,6 @@ export const useAppStore = create<AppState>()(
       name: "zerocat-settings",
       partialize: (state) => ({
         resourceRoot: state.resourceRoot,
-        logoSourcePath: state.logoSourcePath,
         relativeModeEnabled: state.relativeModeEnabled,
         previewMode: state.previewMode,
         imagePreviewBehavior: state.imagePreviewBehavior,
