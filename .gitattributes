@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+# 二进制资源不做行尾转换
+*.png binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.psd binary
+*.moc3 binary
+*.exe binary
