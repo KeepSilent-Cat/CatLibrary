@@ -91,7 +91,9 @@ export class LAppDelegate {
   /**
    * 実行処理。
    */
-  public run(): void {
+  private _renderFrames = 0;
+
+  public run(onError?: (error: unknown) => void): void {
     // メインループ
     const loop = (): void => {
       // インスタンスの有無の確認（作り直された別インスタンスの場合は自分のループを止める）
@@ -100,10 +102,11 @@ export class LAppDelegate {
       }
 
       // 時間更新
+      this._renderFrames++;
       LAppPal.updateTime();
 
       for (let i = 0; i < this._subdelegates.length; i++) {
-        this._subdelegates[i].update();
+        try { this._subdelegates[i].update(); } catch (error) { onError?.(error); return; }
       }
 
       // ループのために再帰呼び出し
@@ -147,7 +150,7 @@ export class LAppDelegate {
       const subdelegate = this._subdelegates[i];
       const canvas = subdelegate.getCanvas();
       summaries.push(
-        `canvas=${canvas.width}x${canvas.height} ${subdelegate.getLive2DManager().getDebugSummary()}`
+        `frames=${this._renderFrames} canvas=${canvas.width}x${canvas.height} ${subdelegate.getLive2DManager().getDebugSummary()}`
       );
     }
     return summaries.join(' | ');

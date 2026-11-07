@@ -1,0 +1,8 @@
+CatLibrary 0.1.1 本地更新（2026-11-08）
+来源：D:\mvp_project\Cat_library 当前工作区，包含现有未提交改动。
+便携入口：D:\CatLibrary\cat_library.exe；开始菜单快捷方式指向该入口。
+备份：D:\CatLibrary-backup-20261108-003149
+浏览器配置：webview-data-v3；首次迁移原 webview-data 的 Local Storage、IndexedDB，原目录保留；不迁移旧缓存。
+构建、前端测试1项通过。迁移测试在独立目录运行通过（开发target目录运行曾被拒绝访问），已实测原快捷方式启动成功与主页面、262件馆藏。
+未更改library或metadata.json，未关闭系统防护。开发目录路径权限/安全软件限制的具体来源尚未确认。
+仍未购买代码签名证书，无法承诺其他电脑不会出现未知发布者提示。

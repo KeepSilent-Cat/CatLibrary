@@ -1,6 +1,6 @@
 [package]
 name = "cat_library"
-version = "0.1.0"
+version = "0.1.2"
 description = "ZeroCat local media index desktop shell"
 authors = ["ZeroCat"]
 license = ""
@@ -22,7 +22,9 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.11.3", features = ["custom-protocol", "protocol-asset"] }
 tauri-plugin-dialog = "2"
-winapi = { version = "0.3", features = ["winuser", "wingdi", "windef", "winbase"] }
+winapi = { version = "0.3", features = ["winuser", "wingdi", "windef", "winbase", "synchapi", "errhandlingapi", "winnt", "jobapi2", "processthreadsapi"] }
 flate2 = "1.0"
+# 日志：把 wry / WebView2 的错误写进启动日志，否则桌面端出错时完全看不到原因
+log = "0.4"
 # 列表卡片缩略图：只需常见图片格式的解码 + jpeg/png 编码
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }

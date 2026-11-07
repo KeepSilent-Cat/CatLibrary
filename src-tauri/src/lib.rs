@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
   collections::HashMap,
   env, fs,
+  io::Write,
   path::{Path, PathBuf},
   sync::{
     atomic::{AtomicUsize, Ordering},
@@ -2864,9 +2865,231 @@ fn collect_model3_files(dir: &Path, out: &mut Vec<String>) -> Result<(), String>
   Ok(())
 }
 
+/// 弹一个原生错误框。
+/// 桌面端双击启动时没有控制台，窗口又可能根本没建出来，这是唯一还能让用户看到原因的办法。
+#[cfg(windows)]
+fn show_error_dialog(title: &str, message: &str) {
+  use std::ffi::OsStr;
+  use std::iter::once;
+  use std::os::windows::ffi::OsStrExt;
+  use winapi::um::winuser::{MessageBoxW, MB_ICONERROR, MB_OK};
+
+  let wide = |text: &str| -> Vec<u16> {
+    OsStr::new(text).encode_wide().chain(once(0)).collect()
+  };
+
+  let title_wide = wide(title);
+  let message_wide = wide(message);
+
+  unsafe {
+    MessageBoxW(
+      std::ptr::null_mut(),
+      message_wide.as_ptr(),
+      title_wide.as_ptr(),
+      MB_OK | MB_ICONERROR,
+    );
+  }
+}
+
+#[cfg(not(windows))]
+fn show_error_dialog(title: &str, message: &str) {
+  eprintln!("{title}: {message}");
+}
+
+/// 单实例保护：用命名互斥体判断是否已有实例在跑。
+///
+/// 不加这个的话，重复启动会去抢 WebView2 的用户数据目录，拿不到就报
+/// `ERROR_BUSY（请求的资源在使用中）`，而且失败的那个实例不会退出，
+/// 会一直占着目录，导致之后每次启动都打不开。
+#[cfg(windows)]
+fn other_instance_running() -> bool {
+  use std::ffi::OsStr;
+  use std::iter::once;
+  use std::os::windows::ffi::OsStrExt;
+  use winapi::um::errhandlingapi::GetLastError;
+  use winapi::um::synchapi::CreateMutexW;
+
+  /// ERROR_ALREADY_EXISTS：CreateMutexW 发现同名互斥体已存在时设置的错误码
+  const ERROR_ALREADY_EXISTS: u32 = 183;
+
+  let name: Vec<u16> = OsStr::new("Local\\com.zerocat.catlibrary.instance")
+    .encode_wide()
+    .chain(once(0))
+    .collect();
+
+  unsafe {
+    // 句柄故意不释放：它要在整个进程生命周期内保持存在
+    let handle = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
+    if handle.is_null() {
+      return false;
+    }
+    GetLastError() == ERROR_ALREADY_EXISTS
+  }
+}
+
+#[cfg(not(windows))]
+fn other_instance_running() -> bool {
+  false
+}
+
+/// 启动环境诊断。
+///
+/// WebView2 必须能启动它自己的子进程（msedgewebview2.exe）。
+/// 如果本进程被放进带限制的 Job 对象，或者安全策略禁止创建子进程，
+/// WebView2 会以 `ERROR_BUSY` 失败——所以先把这两件事记进日志。
+#[cfg(windows)]
+fn log_process_environment() {
+  match std::process::Command::new("cmd.exe")
+    .args(["/c", "exit"])
+    .spawn()
+  {
+    Ok(mut child) => {
+      let _ = child.wait();
+      log_startup("[diag] 子进程创建：成功");
+    }
+    Err(error) => log_startup(&format!("[diag] 子进程创建：失败 {error}")),
+  }
+}
+
+#[cfg(not(windows))]
+fn log_process_environment() {}
+
+/// 启动日志路径：%LOCALAPPDATA%\CatLibrary\startup.log
+///
+/// 桌面端双击启动时没有控制台，panic 信息会直接丢掉。这个日志是出问题时唯一的线索。
+fn startup_log_path() -> PathBuf {
+  let base = env::var_os("LOCALAPPDATA")
+    .map(PathBuf::from)
+    .unwrap_or_else(env::temp_dir);
+  let dir = base.join("CatLibrary");
+  let _ = fs::create_dir_all(&dir);
+  dir.join("startup.log")
+}
+
+fn log_startup(message: &str) {
+  let line = format!("[{}] {}\n", now_timestamp(), message);
+  if let Ok(mut file) = fs::OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(startup_log_path())
+  {
+    let _ = file.write_all(line.as_bytes());
+  }
+}
+
+/// 把 log crate 的输出（wry、tauri、WebView2 的报错都在这里）接到启动日志上。
+struct StartupFileLogger;
+
+impl log::Log for StartupFileLogger {
+  fn enabled(&self, _metadata: &log::Metadata) -> bool {
+    true
+  }
+
+  fn log(&self, record: &log::Record) {
+    log_startup(&format!(
+      "{} [{}] {}",
+      record.level(),
+      record.target(),
+      record.args()
+    ));
+  }
+
+  fn flush(&self) {}
+}
+
+static STARTUP_LOGGER: StartupFileLogger = StartupFileLogger;
+
+/// 安装 panic 钩子：把 panic 位置、消息与调用栈写进启动日志。
+fn install_startup_logging() {
+  log_startup(&format!("=== 进程启动 pid={} ===", std::process::id()));
+
+  let _ = log::set_logger(&STARTUP_LOGGER);
+  log::set_max_level(log::LevelFilter::Trace);
+  log::info!("[lib] 日志系统已接入");
+
+  std::panic::set_hook(Box::new(|info| {
+    let location = info
+      .location()
+      .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+      .unwrap_or_else(|| "unknown".to_string());
+    let payload = if let Some(text) = info.payload().downcast_ref::<&str>() {
+      (*text).to_string()
+    } else if let Some(text) = info.payload().downcast_ref::<String>() {
+      text.clone()
+    } else {
+      "未知 panic 载荷".to_string()
+    };
+    log_startup(&format!("PANIC {location}: {payload}"));
+    log_startup(&format!(
+      "backtrace:\n{}",
+      std::backtrace::Backtrace::force_capture()
+    ));
+  }));
+}
+
+/// 创建主窗口。
+///
+/// 保留图形渲染兜底；使用独立、稳定的用户数据目录隔离旧缓存。
+fn build_main_window<M: tauri::Manager<tauri::Wry>>(
+  manager: &M,
+  data_directory: PathBuf,
+) -> tauri::Result<tauri::WebviewWindow<tauri::Wry>> {
+  WebviewWindowBuilder::new(manager, "main", WebviewUrl::App("index.html".into()))
+    .title("Cat Library")
+    .inner_size(1440.0, 900.0)
+    .min_inner_size(1200.0, 760.0)
+    .decorations(false)
+    .resizable(true)
+    .shadow(false)
+    // 透明窗口在 Windows 上会禁用文件拖放（wry 合成模式无子窗口可挂 OLE 拖放目标），
+    // 而应用本身有不透明背景图，去掉透明视觉无差异
+    .transparent(false)
+    .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI --ignore-gpu-blocklist --enable-unsafe-swiftshader --enable-gpu-rasterization")
+    .data_directory(data_directory)
+    .build()
+}
+
+/// 新版隔离浏览器缓存，只在首次创建前迁移本地持久化数据。
+/// 原目录保留不动；迁移失败中止启动，避免静默丢失收藏和设置。
+fn prepare_webview_data_dir(app_data: &Path) -> std::io::Result<PathBuf> {
+  let target = app_data.join("webview-data-v3");
+  let marker = target.join("catlibrary-storage-migrated");
+  if !marker.exists() {
+    let legacy = app_data.join("webview-data").join("EBWebView").join("Default");
+    let destination = target.join("EBWebView").join("Default");
+    fs::create_dir_all(&destination)?;
+    for name in ["Local Storage", "IndexedDB"] {
+      let source = legacy.join(name);
+      if source.is_dir() {
+        fs::create_dir_all(destination.join(name))?;
+        copy_dir_contents(&source, &destination.join(name))
+          .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+      }
+    }
+    fs::write(&marker, b"CatLibrary 0.1.1 storage migration complete")?;
+    log_startup("已迁移收藏与设置，旧浏览器数据原样保留");
+  }
+  Ok(target)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  install_startup_logging();
+  log_startup("run(): 开始初始化");
+  log_process_environment();
+
+
+  if other_instance_running() {
+    log_startup("run(): 检测到已有实例，本次启动退出");
+    show_error_dialog(
+      "Cat Library 已在运行",
+      "已经有一个 Cat Library 在运行了（它可能没有显示窗口）。\n\n\
+       请打开任务管理器，结束所有 cat_library.exe 进程，然后再启动。",
+    );
+    std::process::exit(0);
+  }
+
+  let result = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
       scan_library,
@@ -2911,44 +3134,77 @@ pub fn run() {
       add_wallpaper_to_images
     ])
     .setup(|app| {
-      // WebView 数据目录固定到应用数据目录（localStorage/收藏等），
-      // 避免因启动方式不同（资源管理器/终端）导致 cwd 不同而出现两套数据
-      let runtime_root = app
+      log_startup("setup(): 开始");
+
+      let app_data = app
         .path()
         .app_data_dir()
-        .unwrap_or_else(|_| env::current_dir().unwrap_or_default())
-        .join("webview-data");
+        .unwrap_or_else(|_| env::current_dir().unwrap_or_default());
 
+      let runtime_root = prepare_webview_data_dir(&app_data)?;
       fs::create_dir_all(&runtime_root)?;
+      log_startup(&format!("setup(): WebView 数据目录 = {}", runtime_root.display()));
 
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Cat Library")
-                .inner_size(1440.0, 900.0)
-                .min_inner_size(1200.0, 760.0)
-                .decorations(false)
-                .resizable(true)
-                .shadow(false)
-                // 透明窗口在 Windows 上会禁用文件拖放（wry 合成模式无子窗口可挂 OLE 拖放目标），
-                // 而应用本身有不透明背景图，去掉透明视觉无差异
-                .transparent(false)
-                // Live2D 走 PixiJS v8，而 v8 已移除 Canvas 回退：宿主 WebView2 一旦拿不到可用的
-                // GPU 上下文（被驱动黑名单拦掉 / GPU 进程起不来），createProgram 就会返回 null，
-                // 表现为 createShader/program 失败 + 黑屏。这里强制放开 GPU：
-                //   --ignore-gpu-blocklist     忽略驱动黑名单
-                //   --enable-unsafe-swiftshader 允许软件渲染兜底（WebGL 彻底不可用时仍能出图）
-                //   --enable-gpu-rasterization  开启 GPU 光栅化
-                // 注意：wry 默认会传 --disable-features=...，用了本方法后必须自己带上，避免行为变化。
-                .additional_browser_args(
-                    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
-                     --ignore-gpu-blocklist \
-                     --enable-unsafe-swiftshader \
-                     --enable-gpu-rasterization",
-                )
-                .data_directory(runtime_root)
-                .build()?;
+      build_main_window(app, runtime_root).map_err(|error| {
+        log_startup(&format!("setup(): 创建窗口失败：{error}"));
+        error
+      })?;
+
+      log_startup("setup(): 主窗口创建完成");
+
+      // 健康检查：WebView2 创建失败时 Tauri 只写一条 log 就继续跑，
+      // 窗口会永远停在 visible=false，用户只看到“闪一下”。
+      // 这里主动发现并明确告知，同时退出，避免又留下一个占着数据目录的幽灵进程。
+      let watch_handle = app.handle().clone();
+      std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let Some(window) = watch_handle.get_webview_window("main") else {
+          log_startup("[health] 主窗口已不存在");
+          return;
+        };
+        match window.url() {
+          Ok(url) => log_startup(&format!("[health] 页面地址 = {url}")),
+          Err(error) => {
+            log_startup(&format!("[health] WebView 创建失败：{error}"));
+            show_error_dialog(
+              "Cat Library 启动失败",
+              "窗口的浏览器内核（WebView2）没能创建成功，界面无法显示。\n\n\
+               本次启动的具体原因已写入：\n%LOCALAPPDATA%\\CatLibrary\\startup.log\n\n\
+               可以先试：重启电脑后再次启动；如果仍然失败，请把上面那个日志文件发给开发者。",
+            );
+            std::process::exit(1);
+          }
+        }
+      });
 
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .run(tauri::generate_context!());
+
+  match result {
+    Ok(()) => log_startup("run(): 事件循环正常结束"),
+    Err(error) => log_startup(&format!("run(): 事件循环返回错误：{error}")),
+  }
+}
+#[cfg(test)]
+mod startup_profile_tests {
+  use super::*;
+  #[test]
+  fn migrates_storage_once_without_copying_cache_or_mutating_legacy() {
+    let root = PathBuf::from("D:/CatLibrary-update-test").join(format!("migration-test-{}-{}", std::process::id(), now_timestamp()));
+    let legacy = root.join("webview-data/EBWebView/Default");
+    fs::create_dir_all(legacy.join("Local Storage/leveldb")).unwrap();
+    fs::create_dir_all(legacy.join("Cache")).unwrap();
+    fs::write(legacy.join("Local Storage/leveldb/settings"), b"saved-settings").unwrap();
+    fs::write(legacy.join("Cache/old"), b"old-cache").unwrap();
+    let target = prepare_webview_data_dir(&root).unwrap();
+    let settings = target.join("EBWebView/Default/Local Storage/leveldb/settings");
+    assert_eq!(fs::read(&settings).unwrap(), b"saved-settings");
+    assert!(!target.join("EBWebView/Default/Cache").exists());
+    fs::write(&settings, b"new-settings").unwrap();
+    assert_eq!(prepare_webview_data_dir(&root).unwrap(), target);
+    assert_eq!(fs::read(&settings).unwrap(), b"new-settings");
+    assert_eq!(fs::read(legacy.join("Local Storage/leveldb/settings")).unwrap(), b"saved-settings");
+    fs::remove_dir_all(root).unwrap();
+  }
 }

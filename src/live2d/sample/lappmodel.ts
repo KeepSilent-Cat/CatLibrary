@@ -1,3 +1,5 @@
+import { fitBounds } from "./fitbounds";
+import { CubismShaderManager_WebGL } from "../framework/rendering/cubismshader_webgl";
 /**
  * Copyright(c) Live2D Inc. All rights reserved.
  *
@@ -609,7 +611,9 @@ export class LAppModel extends CubismUserModel {
     const model = this.getModel();
     const modelWidth = model ? model.getCanvasWidth().toFixed(3) : '-';
     const modelHeight = model ? model.getCanvasHeight().toFixed(3) : '-';
-    return `state=${LoadStep[this._state]} initialized=${this.isInitialized()} updating=${this.isUpdating()} renderer=${this.getRenderer() ? 'yes' : 'no'} textureCount=${this._textureCount}/${Math.max(this._modelSetting?.getTextureCount?.() ?? 0, 0)} model=${model ? `${modelWidth}x${modelHeight}` : 'none'}`;
+    const gl = this._subdelegate?.getGl();
+    const shader = gl ? CubismShaderManager_WebGL.getInstance().getShader(gl) : null;
+    return `shaderReady=${shader?._isShaderLoaded} shaderError=${shader?._shaderError || "none"} contextLost=${gl?.isContextLost()} drawables=${model?.getDrawableCount()} state=${LoadStep[this._state]} initialized=${this.isInitialized()} updating=${this.isUpdating()} renderer=${this.getRenderer() ? 'yes' : 'no'} textureCount=${this._textureCount}/${Math.max(this._modelSetting?.getTextureCount?.() ?? 0, 0)} model=${model ? `${modelWidth}x${modelHeight}` : 'none'}`;
   }
 
   /**
@@ -1004,21 +1008,24 @@ export class LAppModel extends CubismUserModel {
       return;
     }
 
-    const maxLogicalWidth = 1.6;
-    const maxLogicalHeight = 1.78;
-    const modelWidth = Math.max(this._model.getCanvasWidth(), 0.0001);
-    const modelHeight = Math.max(this._model.getCanvasHeight(), 0.0001);
-
-    this._modelMatrix.loadIdentity();
-
-    if (modelWidth / maxLogicalWidth > modelHeight / maxLogicalHeight) {
-      this._modelMatrix.setWidth(maxLogicalWidth);
-    } else {
-      this._modelMatrix.setHeight(maxLogicalHeight);
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    for(let i=0;i<this._model.getDrawableCount();i++) {
+      const vertices=this._model.getDrawableVertices(i);
+      for(let j=0;j<vertices.length;j+=2) {
+        if(!Number.isFinite(vertices[j]) || !Number.isFinite(vertices[j+1])) continue;
+        minX=Math.min(minX,vertices[j]); maxX=Math.max(maxX,vertices[j]);
+        minY=Math.min(minY,vertices[j+1]); maxY=Math.max(maxY,vertices[j+1]);
+      }
     }
-
-    this._modelMatrix.centerX(0.0);
-    this._modelMatrix.bottom(-1.0);
+    const fit=fitBounds(minX,maxX,minY,maxY);
+    this._modelMatrix.loadIdentity();
+    if(fit) {
+      this._modelMatrix.scale(fit.scale,fit.scale);
+      this._modelMatrix.translate(fit.x,fit.y);
+    } else {
+      this._modelMatrix.setHeight(1.78);
+      this._modelMatrix.translate(0,0);
+    }
   }
 
   /**

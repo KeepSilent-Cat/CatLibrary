@@ -67,7 +67,10 @@ export class CubismShader_WebGL {
    */
   private async loadShader(url: string): Promise<string> {
     const response = await fetch(url);
-    return await response.text();
+    if (!response.ok) throw new Error(`Shader HTTP ${response.status}: ${url}`);
+    const source = await response.text();
+    if (!source.trim() || /^\s*<!doctype|^\s*<html/i.test(source)) throw new Error(`Invalid shader source: ${url}`);
+    return source;
   }
 
   /**
@@ -127,7 +130,7 @@ export class CubismShader_WebGL {
           .then(data => ({ prop: file.prop, data }))
           .catch(error => {
             console.error(`Error loading ${file.path} shader:`, error);
-            return { prop: file.prop, data: '' };
+            throw error;
           })
       )
     );
@@ -1080,6 +1083,7 @@ export class CubismShader_WebGL {
     if (this._isShaderLoading) {
       return;
     }
+    this._shaderError = "";
     this._isShaderLoading = true;
     this._isShaderLoaded = false;
     this._shaderSets.length = this._shaderCount;
@@ -1098,6 +1102,7 @@ export class CubismShader_WebGL {
       })
       .catch(error => {
         this._isShaderLoading = false;
+        this._shaderError = String(error);
         console.error('Failed to load shaders:', error);
       });
   }
@@ -1914,6 +1919,7 @@ export class CubismShader_WebGL {
   _vertShaderSrcBlend: string; // 頂点シェーダーのソース
   _fragShaderSrcBlend: string; // フラグメントシェーダーのソース
   _isShaderLoading: boolean; // シェーダーの読み込み中かどうか
+  _shaderError = "";
   _isShaderLoaded: boolean; // シェーダーの読み込みが完了したかどうか
   _defaultShaderPath: string; // デフォルトのシェーダーパス
   _shaderPath: string; // シェーダーパス

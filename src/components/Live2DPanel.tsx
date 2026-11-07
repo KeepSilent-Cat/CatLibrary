@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import ViewerErrorBoundary from "./ViewerErrorBoundary";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Box, FileImage, Layers, Loader2, Smile, Trash2 } from "lucide-react";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
@@ -243,13 +244,13 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
           </p>
         </div>
       ) : activeTab === "model" ? (
-        <Suspense fallback={<ViewerFallback />}>
+        <ViewerErrorBoundary key={`${itemId}-${activeTab}`}><Suspense fallback={<ViewerFallback />}>
           <Live2DViewer modelPaths={model3} />
-        </Suspense>
+        </Suspense></ViewerErrorBoundary>
       ) : (
-        <Suspense fallback={<ViewerFallback />}>
+        <ViewerErrorBoundary key={`${itemId}-${activeTab}`}><Suspense fallback={<ViewerFallback />}>
           <PSDViewer psdPaths={psd} onDeletePsd={removePsd} onSetCover={setCover} />
-        </Suspense>
+        </Suspense></ViewerErrorBoundary>
       )}
     </div>
   );

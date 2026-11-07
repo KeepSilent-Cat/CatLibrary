@@ -1,7 +1,7 @@
 {
   "name": "cat-library",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 1420 --strictPort",
@@ -15,8 +15,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.8.3",
+    "@tauri-apps/api": "~2.11.0",
+    "@tauri-apps/plugin-dialog": "~2.7.0",
     "ag-psd": "^34.1.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.511.0",

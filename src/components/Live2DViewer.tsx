@@ -1,8 +1,9 @@
+import ViewerBackgroundControl from "./ViewerBackgroundControl";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { LAppDelegate } from "@/live2d/sample/lappdelegate";
-import { setModelEntries, type ModelEntry } from "@/live2d/sample/lappdefine";
+import type { LAppDelegate } from "@/live2d/sample/lappdelegate";
+import type { ModelEntry } from "@/live2d/sample/lappdefine";
 
 interface Live2DViewerProps {
   modelPaths: string[];
@@ -104,6 +105,10 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
   const [copyFeedback, setCopyFeedback] = useState("");
 
   const modelKey = modelPaths.join("|");
+  const backgroundKey = "catlibrary-live2d-background:" + modelKey;
+  const [background, setBackground] = useState("");
+  useEffect(()=>{try{setBackground(localStorage.getItem(backgroundKey)||"");}catch{setBackground("");}},[backgroundKey]);
+  const changeBackground=(value:string)=>{setBackground(value);try{if(value)localStorage.setItem(backgroundKey,value);else localStorage.removeItem(backgroundKey);}catch{/* 本次会话仍可使用 */}};
 
   useEffect(() => {
     const container = containerRef.current;
@@ -133,6 +138,7 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
       delegateRef.current?.onResize();
     };
 
+    let delegateClass: typeof import("@/live2d/sample/lappdelegate").LAppDelegate | null = null;
     const bootstrap = async () => {
       setLoading(true);
       setError(null);
@@ -145,17 +151,23 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
           return;
         }
 
+        const [{ LAppDelegate }, { setModelEntries }] = await Promise.all([
+          import("@/live2d/sample/lappdelegate"),
+          import("@/live2d/sample/lappdefine"),
+        ]);
+        if (cancelled) return;
+        delegateClass = LAppDelegate;
         setLoadingText("正在初始化渲染器…");
 
         // 清掉上一份实例与它的 canvas
         try {
-          LAppDelegate.releaseInstance();
+          delegateClass?.releaseInstance();
         } catch {
           // 旧实例可能已经处于半释放状态，忽略
         }
         container.replaceChildren();
 
-        setModelEntries(entries);
+        setModelEntries([entries[safeIndex]]);
 
         const delegate = LAppDelegate.getInstance();
         delegateRef.current = delegate;
@@ -164,8 +176,7 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
           throw new Error("WebGL2 初始化失败：当前 WebView 无法创建渲染上下文。");
         }
 
-        delegate.changeModel(safeIndex);
-        delegate.run();
+        delegate.run((renderError) => { if (!cancelled) { stopPolling(); setLoading(false); setError("模型渲染失败：" + formatError(renderError)); } });
 
         if (cancelled) {
           return;
@@ -184,7 +195,6 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
             return;
           }
           if (current.isModelReady()) {
-            stopPolling();
             setDebugText(current.getDebugSummary());
             setLoading(false);
           } else if (Date.now() - startedAt > MODEL_LOAD_TIMEOUT) {
@@ -210,7 +220,7 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
       window.removeEventListener("resize", onResize);
 
       try {
-        LAppDelegate.releaseInstance();
+        delegateClass?.releaseInstance();
       } catch {
         // 忽略释放异常，避免打断组件卸载
       }
@@ -249,7 +259,7 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
   };
 
   return (
-    <div className="relative flex h-full min-h-[320px] flex-col overflow-hidden rounded-[24px] border border-white/12 bg-black/24">
+    <div className="relative flex h-full min-h-[320px] flex-col overflow-hidden rounded-[24px] border border-white/12 bg-transparent">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-white/10 px-3 py-2">
         {modelPaths.length > 1 ? (
           <select
@@ -287,12 +297,13 @@ export default function Live2DViewer({ modelPaths }: Live2DViewerProps) {
             {copyFeedback || "复制信息"}
           </button>
         ) : null}
-        <span className="truncate text-xs text-white/50">
+        <ViewerBackgroundControl value={background} onChange={changeBackground}/><span className="truncate text-xs text-white/50">
           {currentModelName ?? "未选择模型"} · 拖拽转视线 · 点击播放动作
         </span>
       </div>
 
-      <div className="relative min-h-0 flex-1 bg-[#0b0f19]">
+      <div className="relative min-h-0 flex-1 bg-transparent">
+        {background&&<img src={background} alt="模型背景" className="pointer-events-none absolute inset-0 h-full w-full object-cover" onError={()=>changeBackground("")}/>}
         <div ref={containerRef} className="absolute inset-0" />
 
         {loading ? (
