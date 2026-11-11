@@ -2397,45 +2397,251 @@ fn metadata_file_path(root: &Path) -> PathBuf {
     .join("metadata.json")
 }
 
-/// 报道（块级排版文档）的存储位置：与素材库同级，跟着库一起搬走。
-fn reports_file_path(root: &Path) -> PathBuf {
-  root
+/// 报道根目录：素材库下的 reports/，一篇报道一个文件夹（自带素材，等于一个小仓库）
+fn reports_root(root: &Path) -> PathBuf {
+  root.join("reports")
+}
+
+fn report_dir(root: &Path, report_id: &str) -> PathBuf {
+  reports_root(root).join(sanitize_file_name(report_id))
+}
+
+/// 旧版把全部报道塞在一个 data/reports.json 里，这里一次性迁移到「一篇一目录」
+fn migrate_legacy_reports(root: &Path) {
+  let legacy = root
     .parent()
     .unwrap_or(root)
     .join("data")
-    .join("reports.json")
+    .join("reports.json");
+  if !legacy.is_file() {
+    return;
+  }
+
+  let Ok(content) = fs::read_to_string(&legacy) else {
+    return;
+  };
+  let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&content) else {
+    return;
+  };
+
+  for report in &list {
+    let Some(id) = report.get("id").and_then(|value| value.as_str()) else {
+      continue;
+    };
+    let dir = report_dir(root, id);
+    if fs::create_dir_all(&dir).is_err() {
+      continue;
+    }
+    if let Ok(text) = serde_json::to_string_pretty(report) {
+      let _ = fs::write(dir.join("report.json"), text);
+    }
+  }
+
+  let _ = fs::rename(&legacy, legacy.with_extension("json.migrated"));
 }
 
-/// 读取全部报道。文件不存在或为空都返回空数组，不报错。
-#[tauri::command]
-fn load_reports(resource_root: String) -> Result<Vec<serde_json::Value>, String> {
-  let path = reports_file_path(&PathBuf::from(&resource_root));
-  if !path.is_file() {
-    return Ok(Vec::new());
-  }
+fn report_asset_kind(path: &Path) -> &'static str {
+  const IMAGE: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp"];
+  const VIDEO: &[&str] = &["mp4", "mkv", "avi", "mov", "webm", "wmv", "m4v", "ts", "m2ts"];
+  const AUDIO: &[&str] = &["mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma"];
+  const TEXT: &[&str] = &["txt", "md", "markdown", "json"];
 
-  let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-  if content.trim().is_empty() {
-    return Ok(Vec::new());
+  if has_extension(path, IMAGE) {
+    "image"
+  } else if has_extension(path, VIDEO) {
+    "video"
+  } else if has_extension(path, AUDIO) {
+    "audio"
+  } else if has_extension(path, TEXT) {
+    "text"
+  } else {
+    "other"
   }
-
-  serde_json::from_str::<Vec<serde_json::Value>>(&content).map_err(|error| error.to_string())
 }
 
-/// 保存全部报道（先写临时文件再替换，避免写到一半断电把文档写坏）。
-#[tauri::command]
-fn save_reports(resource_root: String, reports: Vec<serde_json::Value>) -> Result<(), String> {
-  let path = reports_file_path(&PathBuf::from(&resource_root));
-  if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportAssetPayload {
+  name: String,
+  relative_path: String,
+  path: String,
+  kind: String,
+  size: u64,
+}
+
+fn collect_report_assets(
+  base_dir: &Path,
+  current_dir: &Path,
+  out: &mut Vec<ReportAssetPayload>,
+) -> Result<(), String> {
+  if !current_dir.is_dir() {
+    return Ok(());
   }
 
-  let content = serde_json::to_string_pretty(&reports).map_err(|error| error.to_string())?;
-  let temp_path = path.with_extension("json.tmp");
-  fs::write(&temp_path, content).map_err(|error| error.to_string())?;
-  fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+  let mut entries = fs::read_dir(current_dir)
+    .map_err(|error| error.to_string())?
+    .filter_map(|entry| entry.ok())
+    .map(|entry| entry.path())
+    .collect::<Vec<_>>();
+  entries.sort_by(|left, right| natural_compare_paths(left, right));
+
+  for entry in entries {
+    if entry.is_dir() {
+      collect_report_assets(base_dir, &entry, out)?;
+      continue;
+    }
+    if !entry.is_file() {
+      continue;
+    }
+
+    let relative = entry
+      .strip_prefix(base_dir)
+      .unwrap_or(&entry)
+      .to_string_lossy()
+      .replace('\\', "/");
+    let size = fs::metadata(&entry).map(|meta| meta.len()).unwrap_or(0);
+    let name = entry
+      .file_name()
+      .map(|name| name.to_string_lossy().to_string())
+      .unwrap_or_default();
+    let kind = report_asset_kind(&entry).to_string();
+    let absolute = path_to_string(entry);
+
+    out.push(ReportAssetPayload {
+      name,
+      relative_path: relative,
+      path: absolute,
+      kind,
+      size,
+    });
+  }
 
   Ok(())
+}
+
+/// 读取全部报道：扫描 reports/<id>/report.json（顺带迁移旧格式）
+#[tauri::command]
+fn list_reports(resource_root: String) -> Result<Vec<serde_json::Value>, String> {
+  let root = PathBuf::from(&resource_root);
+  migrate_legacy_reports(&root);
+
+  let base = reports_root(&root);
+  if !base.is_dir() {
+    return Ok(Vec::new());
+  }
+
+  let mut reports = Vec::new();
+  for entry in fs::read_dir(&base).map_err(|error| error.to_string())? {
+    let Ok(entry) = entry else {
+      continue;
+    };
+    let path = entry.path().join("report.json");
+    if !path.is_file() {
+      continue;
+    }
+    if let Ok(content) = fs::read_to_string(&path) {
+      if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+        reports.push(value);
+      }
+    }
+  }
+
+  Ok(reports)
+}
+
+/// 保存单篇报道（reports/<id>/report.json，先写临时文件再替换）
+#[tauri::command]
+fn save_report(resource_root: String, report: serde_json::Value) -> Result<(), String> {
+  let root = PathBuf::from(&resource_root);
+  let id = report
+    .get("id")
+    .and_then(|value| value.as_str())
+    .ok_or_else(|| "报道缺少 id".to_string())?;
+
+  let dir = report_dir(&root, id);
+  fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+
+  let content = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+  let path = dir.join("report.json");
+  let temp = dir.join("report.json.tmp");
+  fs::write(&temp, content).map_err(|error| error.to_string())?;
+  fs::rename(&temp, &path).map_err(|error| error.to_string())?;
+
+  Ok(())
+}
+
+/// 删除整篇报道（连同它自带的素材目录）
+#[tauri::command]
+fn delete_report(resource_root: String, report_id: String) -> Result<(), String> {
+  let root = PathBuf::from(&resource_root);
+  let dir = report_dir(&root, &report_id);
+  if dir.is_dir() {
+    fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+  }
+  Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportImportPayload {
+  /// 导入后在库里的根目录（绝对路径）
+  root: String,
+  /// 这一批导入的文件
+  assets: Vec<ReportAssetPayload>,
+}
+
+/// 把一个本地文件夹整体导入某篇报道的 source/ 里
+#[tauri::command]
+fn import_report_folder(
+  resource_root: String,
+  report_id: String,
+  folder_path: String,
+) -> Result<ReportImportPayload, String> {
+  let root = PathBuf::from(&resource_root);
+  let source = PathBuf::from(&folder_path);
+  if !source.is_dir() {
+    return Err("请选择一个文件夹".to_string());
+  }
+
+  let folder_name = source
+    .file_name()
+    .map(|name| name.to_string_lossy().to_string())
+    .filter(|name| !name.is_empty())
+    .unwrap_or_else(|| "素材".to_string());
+
+  let source_root = report_dir(&root, &report_id).join("source");
+  fs::create_dir_all(&source_root).map_err(|error| error.to_string())?;
+
+  // 同名目录已存在时加后缀，避免覆盖已有素材
+  let mut target = source_root.join(&folder_name);
+  let mut index = 2;
+  while target.exists() {
+    target = source_root.join(format!("{folder_name}({index})"));
+    index += 1;
+  }
+
+  copy_dir_contents(&source, &target).map_err(|error| error.to_string())?;
+
+  let mut assets = Vec::new();
+  collect_report_assets(&target, &target, &mut assets)?;
+
+  Ok(ReportImportPayload {
+    root: path_to_string(target),
+    assets,
+  })
+}
+
+/// 列出某篇报道自带素材目录里的全部文件
+#[tauri::command]
+fn list_report_assets(
+  resource_root: String,
+  report_id: String,
+) -> Result<Vec<ReportAssetPayload>, String> {
+  let root = PathBuf::from(&resource_root);
+  let source_root = report_dir(&root, &report_id).join("source");
+  let mut assets = Vec::new();
+  collect_report_assets(&source_root, &source_root, &mut assets)?;
+  Ok(assets)
 }
 
 fn normalize_metadata_value(value: String) -> Option<String> {
@@ -3408,8 +3614,11 @@ pub fn run() {
       remove_live2d_model,
       save_live2d_cover,
       add_wallpaper_to_images,
-      load_reports,
-      save_reports
+      list_reports,
+      save_report,
+      delete_report,
+      import_report_folder,
+      list_report_assets
     ])
     .setup(|app| {
       log_startup("setup(): 开始");

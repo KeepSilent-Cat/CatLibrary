@@ -1,7 +1,7 @@
 import { FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createReport, loadReports, reportTitle, saveReports, type Report } from "@/lib/reports";
+import { createReport, deleteReport, loadReports, reportTitle, saveReport, type Report } from "@/lib/reports";
 import { useAppStore } from "@/store/useAppStore";
 
 /** 列表卡片封面：取第一个图片块 */
@@ -57,10 +57,9 @@ export default function ReportsPage() {
 
   const createNew = async () => {
     const report = createReport();
-    const next = [report, ...reports];
-    setReports(next);
+    setReports([report, ...reports]);
     try {
-      await saveReports(resourceRoot, next);
+      await saveReport(resourceRoot, report);
       navigate(`/reports/${report.id}`);
     } catch (currentError) {
       setError(currentError instanceof Error ? currentError.message : "新建报道失败");
@@ -74,11 +73,10 @@ export default function ReportsPage() {
       return;
     }
 
-    const next = reports.filter((entry) => entry.id !== report.id);
-    setReports(next);
+    setReports(reports.filter((entry) => entry.id !== report.id));
     setDeleting(null);
     try {
-      await saveReports(resourceRoot, next);
+      await deleteReport(resourceRoot, report.id);
     } catch (currentError) {
       setError(currentError instanceof Error ? currentError.message : "删除报道失败");
     }

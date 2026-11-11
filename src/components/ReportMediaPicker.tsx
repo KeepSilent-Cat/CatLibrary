@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { LibraryItem } from "@/data/library";
 import { filterLibraryIndex, loadLibraryIndex } from "@/lib/library-source";
 import { useAppStore } from "@/store/useAppStore";
-import type { ReportMediaRef } from "@/lib/reports";
+import { assetUrl, listReportAssets, type ReportAsset, type ReportMediaRef } from "@/lib/reports";
 
 interface ReportMediaPickerProps {
   open: boolean;
   kind: "image" | "video" | "audio";
+  reportId?: string;
   onClose: () => void;
   onPick: (media: ReportMediaRef) => void;
 }
@@ -40,7 +41,7 @@ function displayTitle(item: LibraryItem): string {
   return item.altName ?? item.title;
 }
 
-export default function ReportMediaPicker({ open, kind, onClose, onPick }: ReportMediaPickerProps) {
+export default function ReportMediaPicker({ open, kind, reportId, onClose, onPick }: ReportMediaPickerProps) {
   const resourceRoot = useAppStore((state) => state.resourceRoot);
   const ratingFilter = useAppStore((state) => state.ratingFilter);
   const [items, setItems] = useState<LibraryItem[]>([]);
@@ -49,6 +50,9 @@ export default function ReportMediaPicker({ open, kind, onClose, onPick }: Repor
   const [entries, setEntries] = useState<MediaEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<"library" | "own">("library");
+  const [ownAssets, setOwnAssets] = useState<ReportAsset[]>([]);
+  const [loadingOwn, setLoadingOwn] = useState(false);
 
   const meta = KIND_META[kind];
 
@@ -57,6 +61,8 @@ export default function ReportMediaPicker({ open, kind, onClose, onPick }: Repor
       setSelected(null);
       setEntries([]);
       setError(null);
+      setSource("library");
+      setOwnAssets([]);
       return;
     }
 
@@ -161,6 +167,39 @@ export default function ReportMediaPicker({ open, kind, onClose, onPick }: Repor
     [selected, meta.title],
   );
 
+  // 「本报道素材」：导入到这篇报道自带仓库里的文件
+  const ownEntries = useMemo(() => {
+    const wanted = kind === "image" ? "image" : kind === "video" ? "video" : "audio";
+    return ownAssets.filter((asset) => asset.kind === wanted);
+  }, [ownAssets, kind]);
+
+  useEffect(() => {
+    if (!open || source !== "own" || !reportId) {
+      return;
+    }
+    let cancelled = false;
+    setLoadingOwn(true);
+    listReportAssets(resourceRoot, reportId)
+      .then((list) => {
+        if (!cancelled) {
+          setOwnAssets(list);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOwnAssets([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingOwn(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, source, reportId, resourceRoot]);
+
   if (!open) {
     return null;
   }
@@ -197,6 +236,35 @@ export default function ReportMediaPicker({ open, kind, onClose, onPick }: Repor
           </button>
         </div>
 
+        {reportId ? (
+          <div className="mb-3 flex shrink-0 items-center gap-1 self-start rounded-full border border-white/14 bg-white/6 p-1">
+            <button
+              type="button"
+              onClick={() => {
+                setSource("library");
+                setSelected(null);
+              }}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                source === "library" ? "bg-sky-300/22 text-sky-100" : "text-white/60 hover:text-white/85"
+              }`}
+            >
+              素材库
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSource("own");
+                setSelected(null);
+              }}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                source === "own" ? "bg-amber-300/22 text-amber-100" : "text-white/60 hover:text-white/85"
+              }`}
+            >
+              本报道素材
+            </button>
+          </div>
+        ) : null}
+
         {error ? (
           <div className="mb-2 rounded-[10px] border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100">
             {error}
@@ -204,7 +272,48 @@ export default function ReportMediaPicker({ open, kind, onClose, onPick }: Repor
         ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          {!selected ? (
+          {source === "own" ? (
+            loadingOwn ? (
+              <div className="flex h-40 items-center justify-center gap-2 text-sm text-white/60">
+                <Loader2 className="h-4 w-4 animate-spin text-sky-200" />
+                正在读取本报道素材…
+              </div>
+            ) : ownEntries.length === 0 ? (
+              <p className="py-10 text-center text-sm text-white/50">
+                这篇报道还没有导入自己的素材。用编辑器里的「导入文件夹」把准备好的目录搬进来。
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {ownEntries.map((asset) => (
+                  <button
+                    key={asset.path}
+                    type="button"
+                    title={asset.relativePath}
+                    onClick={() =>
+                      onPick({
+                        category: "report",
+                        itemId: asset.relativePath,
+                        path: assetUrl(asset),
+                        title: asset.name,
+                      })
+                    }
+                    className="overflow-hidden rounded-[12px] border border-white/12 bg-white/6 text-left transition hover:border-amber-300/45 hover:bg-white/10"
+                  >
+                    {asset.kind === "image" ? (
+                      <img src={assetUrl(asset)} alt="" loading="lazy" className="h-24 w-full object-cover" />
+                    ) : asset.kind === "video" ? (
+                      <video src={assetUrl(asset)} muted preload="metadata" className="h-24 w-full object-cover" />
+                    ) : (
+                      <div className="flex h-24 w-full items-center justify-center bg-black/30 text-white/40">
+                        <Music className="h-6 w-6" />
+                      </div>
+                    )}
+                    <span className="block truncate px-2 py-1.5 text-[11px] text-white/70">{asset.name}</span>
+                  </button>
+                ))}
+              </div>
+            )
+          ) : !selected ? (
             loadingItems ? (
               <div className="flex h-40 items-center justify-center gap-2 text-sm text-white/60">
                 <Loader2 className="h-4 w-4 animate-spin text-sky-200" />
