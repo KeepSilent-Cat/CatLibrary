@@ -117,7 +117,7 @@ export default function ReportEditorPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
@@ -284,26 +284,53 @@ export default function ReportEditorPage() {
         (asset) => asset.kind === "text" && /\.(md|markdown|txt)$/i.test(asset.name),
       );
 
+      const toMediaBlock = (asset: (typeof result.assets)[number]): ReportBlock => ({
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        type: (asset.kind === "image" ? "image" : asset.kind === "video" ? "video" : "audio") as ReportBlock["type"],
+        media: {
+          category: "report",
+          itemId: asset.relativePath,
+          path: assetUrl(asset),
+          title: asset.name,
+        },
+      });
+
+      let generated: ReportBlock[] = [];
+
       if (markdown) {
         const text = await invoke<string>("read_novel_text", { path: markdown.path });
-        const generated = blocksFromMarkdown(text, result.assets, markdown.relativePath);
-        if (generated.length > 0) {
-          patchReport((current) => {
-            const kept = replaceBody
-              ? []
-              : current.blocks.filter((block) => (block.text ?? "").trim() || block.media);
-            const titleBlock = generated.find((block) => block.type === "h1" && block.text);
-            return {
-              ...current,
-              blocks: [...kept, ...generated],
-              title: current.title.trim() || titleBlock?.text?.trim() || current.title,
-            };
-          });
-        }
+        generated = blocksFromMarkdown(text, result.assets, markdown.relativePath);
+      }
+
+      // 正文里没引用到的媒体（尤其是 视频/ 目录里的原件）直接按顺序补成块，不转码、不改文件
+      const referenced = new Set(
+        generated
+          .filter((block) => block.media?.category === "report")
+          .map((block) => block.media!.itemId),
+      );
+      const extraMedia = result.assets.filter(
+        (asset) =>
+          (asset.kind === "video" || asset.kind === "audio" || asset.kind === "image") &&
+          !referenced.has(asset.relativePath),
+      );
+      generated = [...generated, ...extraMedia.map(toMediaBlock)];
+
+      if (generated.length > 0) {
+        patchReport((current) => {
+          const kept = replaceBody
+            ? []
+            : current.blocks.filter((block) => (block.text ?? "").trim() || block.media);
+          const titleBlock = generated.find((block) => block.type === "h1" && block.text);
+          return {
+            ...current,
+            blocks: [...kept, ...generated],
+            title: current.title.trim() || titleBlock?.text?.trim() || current.title,
+          };
+        });
       }
 
       setSavedToast(
-        `已导入 ${result.assets.length} 个文件${markdown ? "，并按正文自动生成了内容块" : ""}`,
+        `已导入 ${result.assets.length} 个文件${generated.length > 0 ? `，生成 ${generated.length} 个内容块` : ""}`,
       );
     } catch (currentError) {
       setError(currentError instanceof Error ? currentError.message : "导入文件夹失败");
@@ -388,38 +415,51 @@ export default function ReportEditorPage() {
         </button>
         <span className="ml-1 min-w-0 flex-1 truncate text-sm text-white/80">{reportTitle(report)}</span>
         <span className="shrink-0 text-[11px] text-white/40">
-          {importing ? "导入中…" : saving ? "保存中…" : savedAt ? "已自动保存" : "改动会自动保存"}
+          {mode === "preview"
+            ? "阅读模式"
+            : importing
+              ? "导入中…"
+              : saving
+                ? "保存中…"
+                : savedAt
+                  ? "已自动保存"
+                  : "改动会自动保存"}
         </span>
-        <button
-          type="button"
-          onClick={() => void importFolder(false)}
-          disabled={importing}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-300/35 bg-amber-300/12 px-3 py-1.5 text-xs text-amber-100 transition hover:bg-amber-300/22 disabled:opacity-50"
-          title="把准备好的文件夹整个搬进这篇报道，有 md/txt 正文会自动生成内容块"
-        >
-          <FolderOpen className="h-3.5 w-3.5" />
-          导入文件夹
-        </button>
-        <button
-          type="button"
-          onClick={() => void insertOwnMedia()}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/16 bg-white/8 px-3 py-1.5 text-xs text-white/75 transition hover:bg-white/16"
-          title="把本篇报道已导入的图片/视频按顺序追加成块"
-        >
-          <ImagePlus className="h-3.5 w-3.5" />
-          插入全部媒体
-        </button>
+        {mode === "edit" ? (
+          <>
+            <button
+              type="button"
+              onClick={() => void importFolder(false)}
+              disabled={importing}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-300/35 bg-amber-300/12 px-3 py-1.5 text-xs text-amber-100 transition hover:bg-amber-300/22 disabled:opacity-50"
+              title="把准备好的文件夹整个搬进这篇报道，有 md/txt 正文会自动生成内容块"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              导入文件夹
+            </button>
+            <button
+              type="button"
+              onClick={() => void insertOwnMedia()}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/16 bg-white/8 px-3 py-1.5 text-xs text-white/75 transition hover:bg-white/16"
+              title="把本篇报道已导入的图片/视频按顺序追加成块"
+            >
+              <ImagePlus className="h-3.5 w-3.5" />
+              插入全部媒体
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           onClick={() => setMode(mode === "edit" ? "preview" : "edit")}
           className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-300/35 bg-sky-300/12 px-3 py-1.5 text-xs text-sky-100 transition hover:bg-sky-300/22"
         >
           {mode === "edit" ? <Eye className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-          {mode === "edit" ? "预览" : "继续编辑"}
+          {mode === "edit" ? "预览" : "编辑"}
         </button>
       </div>
 
-      {/* 排版设置 */}
+      {/* 排版设置（仅编辑模式） */}
+      {mode === "edit" ? (
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-white/8 px-4 py-2">
         <div className="flex items-center gap-1">
           <span className="text-[11px] text-white/40">宽度</span>
@@ -468,6 +508,7 @@ export default function ReportEditorPage() {
 
         <span className="ml-auto text-[11px] text-white/30">{report.blocks.length} 个块</span>
       </div>
+      ) : null}
 
       {error ? (
         <div className="mx-4 mt-2 rounded-[10px] border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100">
