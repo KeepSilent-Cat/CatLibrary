@@ -1,4 +1,4 @@
-export type CategoryKey = "images" | "videos" | "games" | "comics" | "screenshots" | "music" | "live2d";
+export type CategoryKey = "images" | "videos" | "games" | "comics" | "screenshots" | "music" | "live2d" | "novels";
 
 export type CoverType = "image" | "video" | "fallback";
 export type SortMode = "default" | "time_desc" | "name_asc";
@@ -112,5 +112,10 @@ export const categoryMeta: CategoryMeta[] = [
     key: "live2d",
     title: "Live2D",
     description: "Live2D 角色模型仓库（建设中）。",
+  },
+  {
+    key: "novels",
+    title: "小说",
+    description: "按书归档文本，内置阅读器，支持多章节。",
   },
 ];

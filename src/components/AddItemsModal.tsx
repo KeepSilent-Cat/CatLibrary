@@ -51,6 +51,7 @@ const categoryTitle: Record<CategoryKey, string> = {
   videos: "视频",
   games: "游戏",
   comics: "漫画",
+  novels: "小说",
   screenshots: "截图",
   music: "音乐",
   live2d: "模型",
@@ -319,7 +320,7 @@ export default function AddItemsModal({
         className="glass-panel flex max-h-[82vh] w-[540px] max-w-[92vw] flex-col rounded-[24px] p-5"
       >
         {/* 标题 */}
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex shrink-0 items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-white/48">Add Items</p>
             <h3 className="mt-0.5 text-base font-semibold text-white">
@@ -336,6 +337,8 @@ export default function AddItemsModal({
           </button>
         </div>
 
+        {/* 中间内容可滚动：导入上百章时不会把按钮挤出窗外 */}
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {/* 拖放区 */}
         <div
           className={cn(
@@ -416,7 +419,7 @@ export default function AddItemsModal({
                 </button>
               </div>
             )}
-            <div className="mt-2 max-h-40 overflow-y-auto rounded-[12px] border border-white/10 bg-black/20 p-2">
+            <div className="mt-2 max-h-40 shrink-0 overflow-y-auto rounded-[12px] border border-white/10 bg-black/20 p-2">
               {paths.map((path, index) => (
                 <div key={path} className="flex items-center gap-2 px-1 py-0.5 text-xs text-white/72">
                   {isArchivePath(path) ? (
@@ -577,13 +580,15 @@ export default function AddItemsModal({
                     ? `${resourceRoot}\\comics\\${selectedGroupId}\\source\\`
                     : `${resourceRoot}\\comics\\${nextGroupFolder}\\source\\`}
                 </span>
-                <span className="mt-1 block text-white/38">
+                <span className="mt-1 block break-words text-white/38">
                   {paths
+                    .slice(0, 6)
                     .map(
                       (path, index) =>
                         `${pathBaseName(path)} → 第 ${chapterForIndex(index)} 章`,
                     )
                     .join("、")}
+                  {paths.length > 6 ? ` … 等 ${paths.length} 个文件` : ""}
                   {comicMode === "existing" && selectedGroupId
                     ? ` · 目标漫画：${existingItems?.find((item) => item.id === selectedGroupId)?.title ?? selectedGroupId}`
                     : trimmedName !== ""
@@ -605,9 +610,10 @@ export default function AddItemsModal({
         )}
 
         {error && <div className="mt-2 text-xs text-rose-300">{error}</div>}
+        </div>
 
         {/* 操作按钮 */}
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex shrink-0 justify-end gap-2">
           <button
             type="button"
             onClick={onClose}

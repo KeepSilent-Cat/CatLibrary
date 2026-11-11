@@ -67,6 +67,8 @@ export default function App() {
             <Route path="/music/:itemId" element={<LibraryDetailPage category="music" />} />
             <Route path="/live2d" element={<CategoryPage category="live2d" />} />
             <Route path="/live2d/:itemId" element={<LibraryDetailPage category="live2d" />} />
+            <Route path="/novels" element={<CategoryPage category="novels" />} />
+            <Route path="/novels/:itemId" element={<LibraryDetailPage category="novels" />} />
             <Route path="/favorites" element={<FavoritesPage />} />
             <Route path="/board" element={<BoardPage />} />
             <Route path="/settings" element={<Settings />} />

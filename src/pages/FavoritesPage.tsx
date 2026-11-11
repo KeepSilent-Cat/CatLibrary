@@ -9,6 +9,7 @@ const favoriteTabs: { key: CategoryKey; label: string }[] = [
   { key: "games", label: "游戏" },
   { key: "comics", label: "漫画" },
   { key: "screenshots", label: "截图" },
+  { key: "novels", label: "小说" },
 ];
 
 export default function FavoritesPage() {

@@ -20,6 +20,8 @@ const THUMBNAIL_DIR_NAME: &str = "thumbnails";
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "mov", "webm", "wmv", "m4v"];
 const GAME_FILE_EXTENSIONS: &[&str] = &["exe", "apk", "zip", "rar", "7z", "001", "iso"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma"];
+/// 小说可导入的文件：纯文本为主，epub 只做列出（不解析）
+const NOVEL_EXTENSIONS: &[&str] = &["txt", "md", "markdown", "epub"];
 const PREFERRED_GAME_IMAGE_NAMES: &[&str] = &["cover", "poster", "title", "icon", "presplash_background"];
 
 #[derive(Serialize)]
@@ -66,6 +68,7 @@ struct LibraryIndexPayload {
   screenshots: Vec<LibraryItemPayload>,
   music: Vec<LibraryItemPayload>,
   live2d: Vec<LibraryItemPayload>,
+  novels: Vec<LibraryItemPayload>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -146,6 +149,7 @@ fn scan_library(app: AppHandle, resource_root: String) -> Result<LibraryIndexPay
       screenshots: Vec::new(),
       music: Vec::new(),
       live2d: Vec::new(),
+      novels: Vec::new(),
     });
   }
 
@@ -162,6 +166,7 @@ fn scan_library(app: AppHandle, resource_root: String) -> Result<LibraryIndexPay
     screenshots: scan_category(&root, "screenshots", &metadata)?,
     music: scan_category(&root, "music", &metadata)?,
     live2d: scan_category(&root, "live2d", &metadata)?,
+    novels: scan_category(&root, "novels", &metadata)?,
   };
 
   attach_cover_thumbnails(&app, &mut index);
@@ -1336,6 +1341,214 @@ fn delete_music_cover(resource_root: String, group_id: String) -> Result<(), Str
   clear_cover_dir_images(&cover_dir)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VideoTrackPayload {
+  name: String,
+  path: String,
+  relative_path: String,
+}
+
+/// 递归收集视频文件（自然排序），把一个视频条目当成「多集 / 多集选集」来播放
+fn collect_video_tracks(
+  source_dir: &Path,
+  current_dir: &Path,
+  out: &mut Vec<VideoTrackPayload>,
+) -> Result<(), String> {
+  if !current_dir.is_dir() {
+    return Ok(());
+  }
+
+  let mut entries = fs::read_dir(current_dir)
+    .map_err(|error| error.to_string())?
+    .filter_map(|entry| entry.ok())
+    .map(|entry| entry.path())
+    .collect::<Vec<_>>();
+  entries.sort_by(|left, right| natural_compare_paths(left, right));
+
+  for entry in entries {
+    if entry.is_dir() {
+      collect_video_tracks(source_dir, &entry, out)?;
+      continue;
+    }
+
+    if !entry.is_file() || !has_extension(&entry, VIDEO_EXTENSIONS) {
+      continue;
+    }
+
+    let relative = entry
+      .strip_prefix(source_dir)
+      .unwrap_or(&entry)
+      .to_string_lossy()
+      .replace('\\', "/");
+
+    out.push(VideoTrackPayload {
+      name: entry
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default(),
+      path: path_to_string(entry),
+      relative_path: relative,
+    });
+  }
+
+  Ok(())
+}
+
+/// 列出一个视频条目 source 目录下的全部视频文件（按剧集/集数自然排序）
+#[tauri::command]
+fn list_video_tracks(resource_root: String, group_id: String) -> Result<Vec<VideoTrackPayload>, String> {
+  let root = PathBuf::from(&resource_root);
+  let source_dir = root.join("videos").join(&group_id).join("source");
+  let mut tracks = Vec::new();
+  collect_video_tracks(&source_dir, &source_dir, &mut tracks)?;
+  Ok(tracks)
+}
+
+/// 给视频条目设置封面（从图片库挑一张，写入 cover/）
+#[tauri::command]
+fn set_video_cover(
+  resource_root: String,
+  group_id: String,
+  image: CoverImageInput,
+) -> Result<String, String> {
+  let root = PathBuf::from(&resource_root);
+  let cover_dir = root.join("videos").join(&group_id).join("cover");
+  fs::create_dir_all(&cover_dir).map_err(|error| error.to_string())?;
+  clear_cover_dir_images(&cover_dir)?;
+
+  let bytes = decode_base64(&image.data)?;
+  let file_name = format!("cover_{}_{}", now_timestamp(), sanitize_file_name(&image.name));
+  let cover_path = cover_dir.join(file_name);
+  fs::write(&cover_path, bytes).map_err(|error| error.to_string())?;
+  Ok(path_to_string(cover_path))
+}
+
+#[tauri::command]
+fn delete_video_cover(resource_root: String, group_id: String) -> Result<(), String> {
+  let root = PathBuf::from(&resource_root);
+  let cover_dir = root.join("videos").join(&group_id).join("cover");
+  if !cover_dir.exists() {
+    return Ok(());
+  }
+  clear_cover_dir_images(&cover_dir)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NovelChapterPayload {
+  name: String,
+  path: String,
+  relative_path: String,
+  size: u64,
+}
+
+/// 递归收集小说文本文件（自然排序），一个条目下可以有多个章节文件
+fn collect_novel_files(
+  source_dir: &Path,
+  current_dir: &Path,
+  out: &mut Vec<NovelChapterPayload>,
+) -> Result<(), String> {
+  if !current_dir.is_dir() {
+    return Ok(());
+  }
+
+  let mut entries = fs::read_dir(current_dir)
+    .map_err(|error| error.to_string())?
+    .filter_map(|entry| entry.ok())
+    .map(|entry| entry.path())
+    .collect::<Vec<_>>();
+  entries.sort_by(|left, right| natural_compare_paths(left, right));
+
+  for entry in entries {
+    if entry.is_dir() {
+      collect_novel_files(source_dir, &entry, out)?;
+      continue;
+    }
+
+    if !entry.is_file() || !has_extension(&entry, NOVEL_EXTENSIONS) {
+      continue;
+    }
+
+    let relative = entry
+      .strip_prefix(source_dir)
+      .unwrap_or(&entry)
+      .to_string_lossy()
+      .replace('\\', "/");
+    let size = fs::metadata(&entry).map(|meta| meta.len()).unwrap_or(0);
+
+    out.push(NovelChapterPayload {
+      name: entry
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default(),
+      path: path_to_string(entry),
+      relative_path: relative,
+      size,
+    });
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
+fn list_novel_chapters(
+  resource_root: String,
+  group_id: String,
+) -> Result<Vec<NovelChapterPayload>, String> {
+  let root = PathBuf::from(&resource_root);
+  let source_dir = root.join("novels").join(&group_id).join("source");
+  let mut chapters = Vec::new();
+  collect_novel_files(&source_dir, &source_dir, &mut chapters)?;
+  Ok(chapters)
+}
+
+/// 读取小说正文：优先 UTF-8，失败则按 GB18030（兼容 GBK/GB2312）解码。
+/// 单次上限 8MB，避免误拖入超大文件把界面卡死。
+#[tauri::command]
+fn read_novel_text(path: String) -> Result<String, String> {
+  const MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+  let file_path = PathBuf::from(&path);
+  if !file_path.is_file() {
+    return Err("文件不存在".to_string());
+  }
+  if !has_extension(&file_path, NOVEL_EXTENSIONS) {
+    return Err("不是支持的文本格式".to_string());
+  }
+
+  let metadata = fs::metadata(&file_path).map_err(|error| error.to_string())?;
+  if metadata.len() > MAX_BYTES {
+    return Err("文件超过 8MB，暂不支持在应用内直接阅读".to_string());
+  }
+
+  let bytes = fs::read(&file_path).map_err(|error| error.to_string())?;
+  Ok(decode_text_bytes(&bytes))
+}
+
+/// 文本解码：识别 BOM，其次尝试 UTF-8，最后回退 GB18030。
+fn decode_text_bytes(bytes: &[u8]) -> String {
+  if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+    return String::from_utf8_lossy(&bytes[3..]).into_owned();
+  }
+  if bytes.starts_with(&[0xFF, 0xFE]) {
+    let (text, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+    return text.into_owned();
+  }
+  if bytes.starts_with(&[0xFE, 0xFF]) {
+    let (text, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+    return text.into_owned();
+  }
+
+  match std::str::from_utf8(bytes) {
+    Ok(text) => text.to_string(),
+    Err(_) => {
+      let (text, _, _) = encoding_rs::GB18030.decode(bytes);
+      text.into_owned()
+    }
+  }
+}
+
 /// 启动可执行文件（工作目录设为其所在目录，很多游戏依赖此），返回子进程句柄
 fn launch_executable_spawn(path: &Path) -> Result<std::process::Child, String> {
   let working_dir = path.parent().unwrap_or_else(|| Path::new("."));
@@ -1986,6 +2199,7 @@ fn next_sequential_group_dir(category_dir: &Path, category: &str) -> PathBuf {
     "comics" => "comic",
     "music" => "music",
     "live2d" => "live2d",
+    "novels" => "novel",
     _ => "group",
   };
 
@@ -2419,11 +2633,17 @@ fn count_primary_items(category: &str, source_dir: &Path) -> Result<usize, Strin
     "games" => GAME_FILE_EXTENSIONS,
     "screenshots" => IMAGE_EXTENSIONS,
     "music" => AUDIO_EXTENSIONS,
+    "novels" => NOVEL_EXTENSIONS,
     _ => &[],
   };
 
   if category == "music" {
     return Ok(collect_matching_files(source_dir, AUDIO_EXTENSIONS, 8).len());
+  }
+
+  // 小说：章节可能放在子目录里，递归统计文本文件
+  if category == "novels" {
+    return Ok(collect_matching_files(source_dir, NOVEL_EXTENSIONS, 8).len());
   }
 
   let count = fs::read_dir(source_dir)
@@ -2451,6 +2671,7 @@ fn summarize_group(category: &str, source_count: usize) -> String {
     "screenshots" => format!("{source_count} 张截图"),
     "music" => format!("{source_count} 首曲目"),
     "live2d" => format!("{source_count} 项素材"),
+    "novels" => format!("{source_count} 章"),
     _ => format!("{source_count} 项内容"),
   }
 }
@@ -2677,6 +2898,8 @@ fn path_to_string(path: PathBuf) -> String {
 struct Live2dSources {
   model3: Vec<String>,
   psd: Vec<String>,
+  /// 分层 PNG 骨架（非 Cubism）：source/rig/manifest.json 存在时给出其路径
+  rig: Vec<String>,
 }
 
 /// 扫描 live2d 分组的 psd/ 与 model/ 两个槽，找出可预览的 psd 与 model3.json 路径。
@@ -2690,7 +2913,14 @@ fn list_live2d_sources(resource_root: String, item_id: String) -> Result<Live2dS
   collect_model3_files(&source_dir.join("model"), &mut model3)?;
   model3.sort();
   psd.sort();
-  Ok(Live2dSources { model3, psd })
+
+  let mut rig = Vec::new();
+  let rig_manifest = source_dir.join("rig").join("manifest.json");
+  if rig_manifest.is_file() {
+    rig.push(path_to_string(rig_manifest));
+  }
+
+  Ok(Live2dSources { model3, psd, rig })
 }
 
 /// 新建 live2d 角色：创建 live2d_N/source/psd 与 source/model 两个空槽。
@@ -3124,6 +3354,11 @@ pub fn run() {
       list_music_tracks,
       set_music_cover,
       delete_music_cover,
+      list_video_tracks,
+      set_video_cover,
+      delete_video_cover,
+      list_novel_chapters,
+      read_novel_text,
       list_live2d_sources,
       create_live2d_group,
       add_live2d_psd,

@@ -1,14 +1,15 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Maximize2, PanelRight, Play, Settings2, Tag, Trash2, Wallpaper, X } from "lucide-react";
+import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, PanelRight, Play, Settings2, Tag, Trash2, Wallpaper, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { categoryMeta, RATING_OPTIONS, type CategoryKey, type ContentRating, type LibraryItem } from "@/data/library";
-import { clearLibraryIndexCache, loadLibraryIndex, saveLibraryMetadata } from "@/lib/library-source";
+import { clearLibraryIndexCache, filterLibraryIndex, loadLibraryIndex, saveLibraryMetadata } from "@/lib/library-source";
 import { useAppStore } from "@/store/useAppStore";
 import MusicPlayer, { type MusicTrack } from "@/components/MusicPlayer";
 import ImageCoverPicker from "@/components/ImageCoverPicker";
 import Live2DPanel from "@/components/Live2DPanel";
+import NovelReader from "@/components/NovelReader";
 import OriginalImageViewer from "@/components/OriginalImageViewer";
 
 function pathBaseName(path: string): string {
@@ -16,10 +17,18 @@ function pathBaseName(path: string): string {
   return normalized.split("/").filter(Boolean).pop() ?? path;
 }
 
+/** 视频条目里的单个视频文件（后端 list_video_tracks 返回，按集数自然排序） */
+interface VideoTrack {
+  name: string;
+  path: string;
+  relativePath: string;
+}
+
 export default function LibraryDetailPage({ category }: { category: CategoryKey }) {
   const navigate = useNavigate();
   const { itemId } = useParams();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
+  const ratingFilter = useAppStore((state) => state.ratingFilter);
   const openGameCoverScreenshot = useAppStore((state) => state.openGameCoverScreenshot);
   const coverRefreshSignal = useAppStore((state) => state.coverRefreshSignal);
   const gameEmbed = useAppStore((state) => state.gameEmbed);
@@ -44,7 +53,9 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const isGames = category === "games";
   const isImages = category === "images";
   const isMusic = category === "music";
+  const isVideos = category === "videos";
   const isLive2d = category === "live2d";
+  const isNovels = category === "novels";
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
@@ -62,10 +73,16 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const [musicCoverPickerOpen, setMusicCoverPickerOpen] = useState(false);
   const [musicCoverPickerLoading, setMusicCoverPickerLoading] = useState(false);
   const [imageLibraryItems, setImageLibraryItems] = useState<LibraryItem[]>([]);
+  // 视频：一个条目里可以有多个视频文件，按「集」播放
+  const [videoTracks, setVideoTracks] = useState<VideoTrack[]>([]);
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoIndex, setVideoIndex] = useState(0);
+  const [videoCoverBusy, setVideoCoverBusy] = useState(false);
+  const [videoCoverPickerOpen, setVideoCoverPickerOpen] = useState(false);
   const [originalOpen, setOriginalOpen] = useState(false);
 
   const refreshLibraryState = async () => {
-    const index = await loadLibraryIndex(resourceRoot);
+    const index = filterLibraryIndex(await loadLibraryIndex(resourceRoot), ratingFilter);
     setItems(index[category]);
     const tagSet = new Set<string>();
     for (const key of Object.keys(index) as CategoryKey[]) {
@@ -85,8 +102,10 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
     setPageError(null);
 
     loadLibraryIndex(resourceRoot)
-      .then((index) => {
+      .then((rawIndex) => {
         if (!cancelled) {
+          // 分级过滤：被隐藏的条目在这里就不该出现在列表里
+          const index = filterLibraryIndex(rawIndex, ratingFilter);
           setItems(index[category]);
           // 汇总全部素材的标签，作为输入建议
           const tagSet = new Set<string>();
@@ -115,7 +134,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
     return () => {
       cancelled = true;
     };
-  }, [category, resourceRoot]);
+  }, [category, resourceRoot, ratingFilter]);
 
   useEffect(() => {
     setSidebarOpen(isMusic);
@@ -207,6 +226,47 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
       cancelled = true;
     };
   }, [currentItem?.id, isMusic, resourceRoot]);
+
+  // 视频：加载该条目 source 下的全部视频文件，用于选集
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isVideos || !currentItem) {
+      setVideoTracks([]);
+      setVideoLoading(false);
+      setVideoIndex(0);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setVideoLoading(true);
+    setVideoIndex(0);
+    invoke<VideoTrack[]>("list_video_tracks", {
+      resourceRoot,
+      groupId: currentItem.id,
+    })
+      .then((result) => {
+        if (!cancelled) {
+          setVideoTracks(result ?? []);
+        }
+      })
+      .catch((currentError) => {
+        if (!cancelled) {
+          setVideoTracks([]);
+          setSaveError(currentError instanceof Error ? currentError.message : "读取视频列表失败");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setVideoLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentItem?.id, isVideos, resourceRoot]);
 
   // 添加标签：去空白、去重
   const addTag = (raw: string) => {
@@ -481,7 +541,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
     try {
       setMusicCoverPickerLoading(true);
       const index = await loadLibraryIndex(resourceRoot);
-      setImageLibraryItems(index.images);
+      setImageLibraryItems(filterLibraryIndex(index, ratingFilter).images);
       setMusicCoverPickerOpen(true);
     } catch (currentError) {
       setSaveError(currentError instanceof Error ? currentError.message : "读取图片库失败");
@@ -543,6 +603,78 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
     }
   };
 
+  // 视频封面：从图片库挑一张，写入该条目的 cover/ 目录
+  const openVideoCoverPicker = async () => {
+    if (!currentItem) {
+      return;
+    }
+
+    try {
+      setVideoCoverBusy(true);
+      setSaveError(null);
+      const index = await loadLibraryIndex(resourceRoot);
+      setImageLibraryItems(filterLibraryIndex(index, ratingFilter).images);
+      setVideoCoverPickerOpen(true);
+    } catch (currentError) {
+      setSaveError(currentError instanceof Error ? currentError.message : "读取图片库失败");
+    } finally {
+      setVideoCoverBusy(false);
+    }
+  };
+
+  const handlePickVideoCover = async (imageUrl: string) => {
+    if (!currentItem) {
+      return;
+    }
+
+    try {
+      setVideoCoverBusy(true);
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error("读取图片库图片失败");
+      }
+      const blob = await response.blob();
+      const data = await readBlobAsBase64(blob);
+      await invoke("set_video_cover", {
+        resourceRoot,
+        groupId: currentItem.id,
+        image: {
+          name: decodeURIComponent(pathBaseName(imageUrl)),
+          data,
+        },
+      });
+      clearLibraryIndexCache(resourceRoot);
+      await refreshLibraryState();
+      setVideoCoverPickerOpen(false);
+      setSavedToast("视频封面已更新");
+    } catch (currentError) {
+      setSaveError(currentError instanceof Error ? currentError.message : "设置视频封面失败");
+    } finally {
+      setVideoCoverBusy(false);
+    }
+  };
+
+  const handleDeleteVideoCover = async () => {
+    if (!currentItem) {
+      return;
+    }
+
+    try {
+      setVideoCoverBusy(true);
+      await invoke("delete_video_cover", {
+        resourceRoot,
+        groupId: currentItem.id,
+      });
+      clearLibraryIndexCache(resourceRoot);
+      await refreshLibraryState();
+      setSavedToast("已移除视频封面");
+    } catch (currentError) {
+      setSaveError(currentError instanceof Error ? currentError.message : "移除视频封面失败");
+    } finally {
+      setVideoCoverBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="glass-panel flex h-full items-center justify-center rounded-[32px] p-6 text-sm text-white/62">
@@ -561,11 +693,15 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
 
   if (!currentItem) {
     return (
-      <div className="glass-panel flex h-full items-center justify-center rounded-[32px] p-6">
+      <div className="glass-panel flex h-full flex-col items-center justify-center gap-3 rounded-[32px] p-6 text-center">
+        <p className="text-sm text-white/72">该内容不存在，或已被内容分级隐藏。</p>
+        <p className="text-xs leading-5 text-white/45">
+          想看的话，可以在「设置 → 内容分级」里把显示范围调大。
+        </p>
         <button
           type="button"
           onClick={() => navigate(`/${category}`)}
-          className="rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm text-white transition hover:bg-white/16"
+          className="mt-1 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm text-white transition hover:bg-white/16"
         >
           返回 {meta.title}
         </button>
@@ -688,6 +824,10 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
           <div className={`min-h-0 flex-1 overflow-y-auto ${isMusic ? "px-0 pb-0" : "px-6 pb-6"}`}>
             {isLive2d ? (
               <Live2DPanel itemId={currentItem.id} />
+            ) : isNovels ? (
+              <div className="px-1 pb-1">
+                <NovelReader itemId={currentItem.id} />
+              </div>
             ) : isMusic ? (
               <MusicPlayer
                 tracks={musicTracks}
@@ -700,7 +840,71 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
               />
             ) : (
               <div className="relative overflow-hidden rounded-[28px] bg-black/16">
-              {currentItem.coverType === "video" && currentItem.previewMedia ? (
+              {isVideos && videoTracks.length > 0 ? (
+                <div className="flex items-center gap-2 overflow-x-auto border-b border-white/10 bg-black/55 px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setVideoIndex((index) => Math.max(0, index - 1))}
+                    disabled={videoIndex === 0}
+                    className="shrink-0 rounded-full border border-white/16 bg-white/8 px-3 py-1 text-xs text-white/80 transition hover:bg-white/16 disabled:opacity-40"
+                  >
+                    上一集
+                  </button>
+                  <span className="shrink-0 text-xs tabular-nums text-white/70">
+                    {videoIndex + 1} / {videoTracks.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setVideoIndex((index) => Math.min(videoTracks.length - 1, index + 1))}
+                    disabled={videoIndex >= videoTracks.length - 1}
+                    className="shrink-0 rounded-full border border-white/16 bg-white/8 px-3 py-1 text-xs text-white/80 transition hover:bg-white/16 disabled:opacity-40"
+                  >
+                    下一集
+                  </button>
+                  <div className="flex flex-1 items-center gap-1 overflow-x-auto">
+                    {videoTracks.map((track, index) => (
+                      <button
+                        key={track.path}
+                        type="button"
+                        title={track.relativePath}
+                        onClick={() => setVideoIndex(index)}
+                        className={`shrink-0 rounded-full border px-2.5 py-1 text-xs tabular-nums transition ${
+                          index === videoIndex
+                            ? "border-sky-300/50 bg-sky-300/20 text-sky-100"
+                            : "border-white/12 bg-white/6 text-white/60 hover:bg-white/12"
+                        }`}
+                      >
+                        {index + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {isVideos ? (
+                videoLoading ? (
+                  <div className="flex h-[52vh] min-h-[320px] w-full items-center justify-center gap-2 text-sm text-white/60">
+                    <Loader2 className="h-5 w-5 animate-spin text-sky-200" />
+                    正在读取视频列表…
+                  </div>
+                ) : (
+                  <video
+                    key={videoTracks[videoIndex]?.path ?? currentItem.previewMedia ?? "empty"}
+                    src={
+                      videoTracks[videoIndex]?.path
+                        ? convertFileSrc(videoTracks[videoIndex].path)
+                        : (currentItem.previewMedia ?? undefined)
+                    }
+                    controls
+                    playsInline
+                    className="mx-auto block max-h-[70vh] w-full object-contain"
+                    onEnded={() => {
+                      if (videoIndex < videoTracks.length - 1) {
+                        setVideoIndex(videoIndex + 1);
+                      }
+                    }}
+                  />
+                )
+              ) : currentItem.coverType === "video" && currentItem.previewMedia ? (
                 <video
                   src={currentItem.previewMedia}
                   controls
@@ -741,6 +945,30 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                   >
                     <Wallpaper className="h-3.5 w-3.5" />
                     设为背景
+                  </button>
+                ) : null}
+                {isVideos ? (
+                  <button
+                    type="button"
+                    onClick={() => void openVideoCoverPicker()}
+                    disabled={videoCoverBusy}
+                    title="从图片库挑一张图作为这个视频条目的封面"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/24 bg-black/55 px-3.5 py-2 text-xs text-white/90 backdrop-blur-sm transition hover:bg-black/75 hover:text-white disabled:opacity-50"
+                  >
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    设置封面
+                  </button>
+                ) : null}
+                {isVideos && currentItem.coverImage ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteVideoCover()}
+                    disabled={videoCoverBusy}
+                    title="移除自定义封面，回到自动生成"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/30 bg-black/55 px-3.5 py-2 text-xs text-rose-100 backdrop-blur-sm transition hover:bg-black/75 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    移除封面
                   </button>
                 ) : null}
               </div>
@@ -1102,6 +1330,14 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
         items={imageLibraryItems}
         onClose={() => setMusicCoverPickerOpen(false)}
         onPick={(imageUrl) => void handlePickMusicCoverFromLibrary(imageUrl)}
+      />
+
+      <ImageCoverPicker
+        open={videoCoverPickerOpen}
+        loading={videoCoverBusy}
+        items={imageLibraryItems}
+        onClose={() => setVideoCoverPickerOpen(false)}
+        onPick={(imageUrl) => void handlePickVideoCover(imageUrl)}
       />
 
       <OriginalImageViewer

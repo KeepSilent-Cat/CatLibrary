@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import BoardAddPicker from "@/components/BoardAddPicker";
 import BoardPanel from "@/components/BoardPanel";
 import type { LibraryItem } from "@/data/library";
-import { loadLibraryIndex, type LibraryIndex } from "@/lib/library-source";
+import { filterLibraryIndex, loadLibraryIndex, type LibraryIndex } from "@/lib/library-source";
 import { useAppStore } from "@/store/useAppStore";
 
 const BOARD_WIDTH = 3200;
@@ -11,6 +11,7 @@ const BOARD_HEIGHT = 2000;
 
 export default function BoardPage() {
   const resourceRoot = useAppStore((state) => state.resourceRoot);
+  const ratingFilter = useAppStore((state) => state.ratingFilter);
   const boardPanels = useAppStore((state) => state.boardPanels);
   const addBoardPanel = useAppStore((state) => state.addBoardPanel);
   const removeBoardPanel = useAppStore((state) => state.removeBoardPanel);
@@ -45,18 +46,24 @@ export default function BoardPage() {
     };
   }, [resourceRoot]);
 
+  // 分级过滤后的索引：画板添加、面板内容都只认得到的内容
+  const visibleIndex = useMemo(
+    () => (index ? filterLibraryIndex(index, ratingFilter) : null),
+    [index, ratingFilter],
+  );
+
   // 面板 → 素材 的快速查找
   const itemMap = useMemo(() => {
     const map = new Map<string, LibraryItem>();
-    if (index) {
-      for (const key of Object.keys(index) as Array<keyof LibraryIndex>) {
-        for (const item of index[key]) {
+    if (visibleIndex) {
+      for (const key of Object.keys(visibleIndex) as Array<keyof LibraryIndex>) {
+        for (const item of visibleIndex[key]) {
           map.set(`${item.category}/${item.id}`, item);
         }
       }
     }
     return map;
-  }, [index]);
+  }, [visibleIndex]);
 
   const clearAll = () => {
     for (const panel of boardPanels) {
@@ -138,7 +145,7 @@ export default function BoardPage() {
 
       <BoardAddPicker
         open={pickerOpen}
-        index={index}
+        index={visibleIndex}
         onClose={() => setPickerOpen(false)}
         onPick={(category, itemId) => addBoardPanel(category, itemId)}
       />

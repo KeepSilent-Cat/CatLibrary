@@ -5,6 +5,7 @@ import {
   Gamepad2,
   ImageIcon,
   BookOpen,
+  BookText,
   Camera,
   Music,
   Pause,
@@ -254,6 +255,7 @@ const categoryIcon: Record<CategoryKey, typeof ImageIcon> = {
   screenshots: Camera,
   music: Music,
   live2d: Sparkles,
+  novels: BookText,
 };
 
 export default function BoardPanel({

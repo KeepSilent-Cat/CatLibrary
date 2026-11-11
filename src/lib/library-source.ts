@@ -34,6 +34,7 @@ interface RawLibraryIndex {
   screenshots: RawLibraryItem[];
   music: RawLibraryItem[];
   live2d: RawLibraryItem[];
+  novels: RawLibraryItem[];
 }
 
 export interface LibraryIndex {
@@ -44,6 +45,7 @@ export interface LibraryIndex {
   screenshots: LibraryItem[];
   music: LibraryItem[];
   live2d: LibraryItem[];
+  novels: LibraryItem[];
 }
 
 const emptyIndex: LibraryIndex = {
@@ -54,6 +56,7 @@ const emptyIndex: LibraryIndex = {
   screenshots: [],
   music: [],
   live2d: [],
+  novels: [],
 };
 
 const cache = new Map<string, Promise<LibraryIndex>>();
@@ -216,6 +219,7 @@ async function loadLibraryIndexInternal(resourceRoot: string): Promise<LibraryIn
     screenshots: applyLocalMetadata(resourceRoot, result.screenshots.map(mapItem)),
     music: applyLocalMetadata(resourceRoot, result.music.map(mapItem)),
     live2d: applyLocalMetadata(resourceRoot, result.live2d.map(mapItem)),
+    novels: applyLocalMetadata(resourceRoot, result.novels.map(mapItem)),
   };
 }
 
@@ -277,6 +281,28 @@ export async function saveLibraryMetadata(
   }
 
   clearLibraryIndexCache(resourceRoot);
+}
+
+/**
+ * 按内容分级过滤整个索引。
+ *
+ * 所有会列出馆藏的入口（分类页、收藏、画板添加、封面/背景选择器、搜索结果、
+ * 详情页的同分类列表）都必须过这一层，否则被标记的内容会从别的入口漏出来。
+ * ratingFilter：0=仅全年龄 1=含擦边R15 2=全部
+ */
+export function filterLibraryIndex(index: LibraryIndex, ratingFilter: number): LibraryIndex {
+  const keep = (items: LibraryItem[]) => items.filter((item) => item.rating <= ratingFilter);
+
+  return {
+    images: keep(index.images),
+    videos: keep(index.videos),
+    games: keep(index.games),
+    comics: keep(index.comics),
+    screenshots: keep(index.screenshots),
+    music: keep(index.music),
+    live2d: keep(index.live2d),
+    novels: keep(index.novels),
+  };
 }
 
 export function clearLibraryIndexCache(resourceRoot?: string) {

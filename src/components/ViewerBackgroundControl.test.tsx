@@ -8,7 +8,7 @@ vi.mock("@/store/useAppStore",()=>({useAppStore:(select:(s:{resourceRoot:string;
 vi.mock("@tauri-apps/api/core",()=>({invoke:vi.fn(),convertFileSrc:(path:string)=>"asset:"+path}));
 afterEach(cleanup);
 beforeEach(()=>{
- vi.mocked(loadLibraryIndex).mockResolvedValue({images:[{id:"group",title:"山景",category:"images",relativePath:"images/group",summary:"",coverType:"image",coverImage:"cover",previewImages:[],sourceEntries:[],sourceCount:2,modifiedAt:0,rating:0,tags:[]},{id:"hidden",title:"隐藏分级",category:"images",relativePath:"images/hidden",summary:"",coverType:"fallback",previewImages:[],sourceEntries:[],sourceCount:1,modifiedAt:0,rating:2,tags:[]}],videos:[],games:[],comics:[],screenshots:[],music:[],live2d:[]});
+ vi.mocked(loadLibraryIndex).mockResolvedValue({images:[{id:"group",title:"山景",category:"images",relativePath:"images/group",summary:"",coverType:"image",coverImage:"cover",previewImages:[],sourceEntries:[],sourceCount:2,modifiedAt:0,rating:0,tags:[]},{id:"hidden",title:"隐藏分级",category:"images",relativePath:"images/hidden",summary:"",coverType:"fallback",previewImages:[],sourceEntries:[],sourceCount:1,modifiedAt:0,rating:2,tags:[]}],videos:[],games:[],comics:[],screenshots:[],music:[],live2d:[],novels:[]});
  vi.mocked(invoke).mockResolvedValue({chapters:[{images:["first.png","second.png"]}]});
 });
 describe("model backgrounds",()=>{

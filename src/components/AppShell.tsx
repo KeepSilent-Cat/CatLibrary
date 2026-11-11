@@ -1,4 +1,4 @@
-import { BookOpen, Camera, Gamepad2, House, ImageIcon, LayoutGrid, Loader2, Music, PlaySquare, Settings2, Sparkles, Star } from "lucide-react";
+import { BookOpen, BookText, Camera, Gamepad2, House, ImageIcon, LayoutGrid, Loader2, Music, PlaySquare, Settings2, Sparkles, Star } from "lucide-react";
 import { Suspense, useEffect, useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import zeroCatLogo from "@/assets/zerocat-icon-max.png";
@@ -56,6 +56,7 @@ const navItems = [
   { to: "/screenshots", label: "截图", icon: Camera },
   { to: "/music", label: "音乐", icon: Music },
   { to: "/live2d", label: "Live2D", icon: Sparkles },
+  { to: "/novels", label: "小说", icon: BookText },
   { to: "/favorites", label: "收藏", icon: Star },
   { to: "/board", label: "画板", icon: LayoutGrid },
   { to: "/settings", label: "设置", icon: Settings2 },

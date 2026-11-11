@@ -244,9 +244,21 @@ export default function LibraryCard({
         <video
           ref={videoRef}
           src={item.previewMedia}
+          poster={item.coverImage}
           muted={isVideoMuted}
           playsInline
           preload="metadata"
+          // 首帧不解码的话卡片就是一片黑：定位到极小的一个时间点，强制渲染出一帧当封面
+          onLoadedMetadata={(event) => {
+            const element = event.currentTarget;
+            if (Number.isFinite(element.duration) && element.duration > 0 && element.currentTime === 0) {
+              try {
+                element.currentTime = Math.min(0.1, element.duration * 0.05);
+              } catch {
+                // 某些格式不允许 seek，忽略即可
+              }
+            }
+          }}
           className={cn(
             "absolute inset-0 h-full w-full transition duration-300 group-hover:scale-[1.03]",
             videoFitMode === "contain" ? "object-contain" : "object-cover",

@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   BookOpen,
+  BookText,
   Camera,
   Gamepad2,
   ImageIcon,
@@ -13,7 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import zeroCatLogo from "@/assets/zerocat-icon-max.png";
 import { categoryMeta, type CategoryKey, type LibraryItem } from "@/data/library";
-import { loadLibraryIndex, type LibraryIndex } from "@/lib/library-source";
+import { filterLibraryIndex, loadLibraryIndex, type LibraryIndex } from "@/lib/library-source";
 import { useAppStore } from "@/store/useAppStore";
 
 /** 分类 → 图标映射。未来新增分类时，在 categoryMeta 与这里各补一项即可，首页自动多一扇门。 */
@@ -25,6 +26,7 @@ const categoryIcons: Record<CategoryKey, LucideIcon> = {
   screenshots: Camera,
   music: Music,
   live2d: Sparkles,
+  novels: BookText,
 };
 
 const emptyIndex: LibraryIndex = {
@@ -35,6 +37,7 @@ const emptyIndex: LibraryIndex = {
   screenshots: [],
   music: [],
   live2d: [],
+  novels: [],
 };
 
 function greeting(): string {
@@ -49,6 +52,7 @@ function greeting(): string {
 export default function Home() {
   const navigate = useNavigate();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
+  const ratingFilter = useAppStore((state) => state.ratingFilter);
   const [index, setIndex] = useState<LibraryIndex>(emptyIndex);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,20 +79,26 @@ export default function Home() {
     };
   }, [resourceRoot, refreshKey]);
 
+  // 分级过滤后的馆藏：计数、最近入馆、藏室卡片都只看得到的内容
+  const visibleIndex = useMemo(
+    () => filterLibraryIndex(index, ratingFilter),
+    [index, ratingFilter],
+  );
+
   const totalCount = useMemo(
-    () => categoryMeta.reduce((sum, meta) => sum + index[meta.key].length, 0),
-    [index],
+    () => categoryMeta.reduce((sum, meta) => sum + visibleIndex[meta.key].length, 0),
+    [visibleIndex],
   );
 
   const recentItems = useMemo(() => {
     const all: Array<{ item: LibraryItem; category: CategoryKey }> = [];
     for (const meta of categoryMeta) {
-      for (const item of index[meta.key]) {
+      for (const item of visibleIndex[meta.key]) {
         all.push({ item, category: meta.key });
       }
     }
     return all.sort((left, right) => right.item.modifiedAt - left.item.modifiedAt).slice(0, 10);
-  }, [index]);
+  }, [visibleIndex]);
 
   return (
     <section className="glass-panel relative h-full min-h-0 overflow-y-auto rounded-[32px]">
@@ -133,7 +143,7 @@ export default function Home() {
           <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
             {categoryMeta.map((meta) => {
               const Icon = categoryIcons[meta.key];
-              const count = index[meta.key].length;
+              const count = visibleIndex[meta.key].length;
               return (
                 <button
                   key={meta.key}
@@ -177,6 +187,25 @@ export default function Home() {
                       <img
                         src={cover}
                         alt={item.altName ?? item.title}
+                        className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
+                      />
+                    ) : item.category === "videos" && item.previewMedia ? (
+                      // 视频没有图片封面时，直接解码首帧当封面，避免首页是一块黑
+                      <video
+                        src={item.previewMedia}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        onLoadedMetadata={(event) => {
+                          const element = event.currentTarget;
+                          if (Number.isFinite(element.duration) && element.duration > 0) {
+                            try {
+                              element.currentTime = Math.min(0.1, element.duration * 0.05);
+                            } catch {
+                              // 忽略不允许 seek 的格式
+                            }
+                          }
+                        }}
                         className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
                       />
                     ) : (

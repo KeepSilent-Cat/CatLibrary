@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import RigViewer from "./RigViewer";
 import ViewerErrorBoundary from "./ViewerErrorBoundary";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Box, FileImage, Layers, Loader2, Smile, Trash2 } from "lucide-react";
@@ -22,6 +23,7 @@ function ViewerFallback() {
 interface Live2DSources {
   model3: string[];
   psd: string[];
+  rig: string[];
 }
 
 interface Live2DPanelProps {
@@ -33,6 +35,7 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
   const setSavedToast = useAppStore((state) => state.setSavedToast);
   const [model3, setModel3] = useState<string[]>([]);
   const [psd, setPsd] = useState<string[]>([]);
+  const [rig, setRig] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,6 +45,7 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
     const result = await invoke<Live2DSources>("list_live2d_sources", { resourceRoot, itemId });
     setModel3(result.model3 ?? []);
     setPsd(result.psd ?? []);
+    setRig(result.rig ?? []);
   }, [resourceRoot, itemId]);
 
   useEffect(() => {
@@ -55,9 +59,12 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
         }
         const models = result.model3 ?? [];
         const psds = result.psd ?? [];
+        const rigs = result.rig ?? [];
         setModel3(models);
         setPsd(psds);
-        setTab(models.length > 0 ? "model" : "psd");
+        setRig(rigs);
+        // 分层骨架也当作「模型」展示，避免直接跳到空的 PSD 页
+        setTab(models.length > 0 || rigs.length > 0 ? "model" : "psd");
         setLoading(false);
       })
       .catch((currentError) => {
@@ -163,9 +170,10 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
   };
 
   const hasModel = model3.length > 0;
+  const hasRig = rig.length > 0;
   const hasPsd = psd.length > 0;
   const activeTab: "model" | "psd" =
-    tab === "model" && hasModel ? "model" : hasPsd ? "psd" : "model";
+    tab === "model" && (hasModel || hasRig) ? "model" : hasPsd ? "psd" : "model";
 
   return (
     <div className="flex h-full min-h-[320px] flex-col gap-3">
@@ -236,7 +244,7 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
         </div>
       ) : error ? (
         <div className="flex flex-1 items-center justify-center text-sm text-rose-200">{error}</div>
-      ) : !hasModel && !hasPsd ? (
+      ) : !hasModel && !hasRig && !hasPsd ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-sm text-white/50">
           <p>这个角色还是空的。</p>
           <p className="text-xs leading-5 text-white/40">
@@ -244,9 +252,15 @@ export default function Live2DPanel({ itemId }: Live2DPanelProps) {
           </p>
         </div>
       ) : activeTab === "model" ? (
-        <ViewerErrorBoundary key={`${itemId}-${activeTab}`}><Suspense fallback={<ViewerFallback />}>
-          <Live2DViewer modelPaths={model3} />
-        </Suspense></ViewerErrorBoundary>
+        hasModel ? (
+          <ViewerErrorBoundary key={`${itemId}-${activeTab}`}><Suspense fallback={<ViewerFallback />}>
+            <Live2DViewer modelPaths={model3} />
+          </Suspense></ViewerErrorBoundary>
+        ) : (
+          <ViewerErrorBoundary key={`${itemId}-rig`}>
+            <RigViewer manifestPath={rig[0]} />
+          </ViewerErrorBoundary>
+        )
       ) : (
         <ViewerErrorBoundary key={`${itemId}-${activeTab}`}><Suspense fallback={<ViewerFallback />}>
           <PSDViewer psdPaths={psd} onDeletePsd={removePsd} onSetCover={setCover} />
