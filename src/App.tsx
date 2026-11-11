@@ -12,6 +12,8 @@ const FavoritesPage = lazy(() => import("@/pages/FavoritesPage"));
 const LibraryDetailPage = lazy(() => import("@/pages/LibraryDetailPage"));
 const ComicReaderPage = lazy(() => import("@/pages/ComicReaderPage"));
 const BoardPage = lazy(() => import("@/pages/BoardPage"));
+const ReportsPage = lazy(() => import("@/pages/ReportsPage"));
+const ReportEditorPage = lazy(() => import("@/pages/ReportEditorPage"));
 const Settings = lazy(() => import("@/pages/Settings"));
 
 function PageFallback() {
@@ -71,6 +73,8 @@ export default function App() {
             <Route path="/novels/:itemId" element={<LibraryDetailPage category="novels" />} />
             <Route path="/favorites" element={<FavoritesPage />} />
             <Route path="/board" element={<BoardPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/reports/:reportId" element={<ReportEditorPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

@@ -2397,6 +2397,47 @@ fn metadata_file_path(root: &Path) -> PathBuf {
     .join("metadata.json")
 }
 
+/// 报道（块级排版文档）的存储位置：与素材库同级，跟着库一起搬走。
+fn reports_file_path(root: &Path) -> PathBuf {
+  root
+    .parent()
+    .unwrap_or(root)
+    .join("data")
+    .join("reports.json")
+}
+
+/// 读取全部报道。文件不存在或为空都返回空数组，不报错。
+#[tauri::command]
+fn load_reports(resource_root: String) -> Result<Vec<serde_json::Value>, String> {
+  let path = reports_file_path(&PathBuf::from(&resource_root));
+  if !path.is_file() {
+    return Ok(Vec::new());
+  }
+
+  let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+  if content.trim().is_empty() {
+    return Ok(Vec::new());
+  }
+
+  serde_json::from_str::<Vec<serde_json::Value>>(&content).map_err(|error| error.to_string())
+}
+
+/// 保存全部报道（先写临时文件再替换，避免写到一半断电把文档写坏）。
+#[tauri::command]
+fn save_reports(resource_root: String, reports: Vec<serde_json::Value>) -> Result<(), String> {
+  let path = reports_file_path(&PathBuf::from(&resource_root));
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+  }
+
+  let content = serde_json::to_string_pretty(&reports).map_err(|error| error.to_string())?;
+  let temp_path = path.with_extension("json.tmp");
+  fs::write(&temp_path, content).map_err(|error| error.to_string())?;
+  fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+
+  Ok(())
+}
+
 fn normalize_metadata_value(value: String) -> Option<String> {
   let trimmed = value.trim();
   if trimmed.is_empty() {
@@ -3366,7 +3407,9 @@ pub fn run() {
       remove_live2d_psd,
       remove_live2d_model,
       save_live2d_cover,
-      add_wallpaper_to_images
+      add_wallpaper_to_images,
+      load_reports,
+      save_reports
     ])
     .setup(|app| {
       log_startup("setup(): 开始");
