@@ -12,12 +12,14 @@ import {
   Play,
   PlaySquare,
   Sparkles,
+  Type,
+  Newspaper,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { categoryMeta, type CategoryKey, type LibraryItem } from "@/data/library";
-import type { BoardPanel as BoardPanelData } from "@/store/useAppStore";
+import type { BoardPanel as BoardPanelData, BoardTextStyle } from "@/store/useAppStore";
 import { cn } from "@/lib/utils";
 
 function EmptyHint({ text }: { text: string }) {
@@ -258,25 +260,118 @@ const categoryIcon: Record<CategoryKey, typeof ImageIcon> = {
   novels: BookText,
 };
 
+/* ---------- 文字面板 ---------- */
+function TextPanelBody({
+  panel,
+  onChange,
+  onStyleChange,
+}: {
+  panel: BoardPanelData;
+  onChange: (value: string) => void;
+  onStyleChange: (style: BoardTextStyle) => void;
+}) {
+  const textClass =
+    panel.textStyle === "title"
+      ? "text-xl font-bold leading-snug"
+      : panel.textStyle === "subtitle"
+        ? "text-base font-semibold leading-snug"
+        : "text-xs leading-5";
+
+  return (
+    <div className="flex h-full flex-col">
+      <textarea
+        value={panel.text ?? ""}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        placeholder="写点标题 / 注释…"
+        className={`min-h-0 flex-1 resize-none bg-transparent px-3 py-2 text-white/90 outline-none placeholder:text-white/25 ${textClass}`}
+      />
+      <div className="flex shrink-0 items-center gap-1 border-t border-white/8 px-2 py-1">
+        {(
+          [
+            ["title", "标题"],
+            ["subtitle", "小标题"],
+            ["caption", "注释"],
+          ] as Array<[BoardTextStyle, string]>
+        ).map(([style, text]) => (
+          <button
+            key={style}
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onStyleChange(style)}
+            className={`rounded-full px-2 py-0.5 text-[10px] transition ${
+              (panel.textStyle ?? "caption") === style
+                ? "bg-sky-300/22 text-sky-100"
+                : "text-white/45 hover:bg-white/10 hover:text-white/80"
+            }`}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 报道面板 ---------- */
+function ReportPanelBody({
+  report,
+  onOpen,
+}: {
+  report?: { id: string; title: string; cover?: string; blockCount?: number };
+  onOpen: () => void;
+}) {
+  if (!report) {
+    return <EmptyHint text="该报道已不存在" />;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex h-full w-full flex-col gap-2 p-3 text-left transition hover:bg-white/6"
+    >
+      {report.cover ? (
+        <img src={report.cover} alt="" className="h-24 w-full rounded-[10px] object-cover" />
+      ) : (
+        <div className="flex h-24 w-full items-center justify-center rounded-[10px] bg-black/30">
+          <Newspaper className="h-6 w-6 text-white/30" />
+        </div>
+      )}
+      <span className="w-full truncate text-sm font-medium text-white">{report.title || "未命名报道"}</span>
+      <span className="text-[11px] text-white/45">{report.blockCount ?? 0} 个块 · 点击打开</span>
+    </button>
+  );
+}
+
 export default function BoardPanel({
   panel,
   item,
+  report,
   resourceRoot,
   onRemove,
   onMove,
   onResize,
+  onTextChange,
+  onTextStyleChange,
+  onOpenReport,
 }: {
   panel: BoardPanelData;
   item: LibraryItem | undefined;
+  report?: { id: string; title: string; subtitle?: string; blocks: unknown[]; cover?: string };
   resourceRoot: string;
   onRemove: (id: string) => void;
   onMove: (id: string, x: number, y: number) => void;
   onResize: (id: string, w: number, h: number) => void;
+  onTextChange: (id: string, text: string) => void;
+  onTextStyleChange: (id: string, style: BoardTextStyle) => void;
+  onOpenReport: (id: string) => void;
 }) {
   const dragRef = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; ow: number; oh: number } | null>(null);
-  const Icon = categoryIcon[panel.category] ?? ImageIcon;
-  const label = categoryMeta.find((meta) => meta.key === panel.category)?.title ?? panel.category;
+  const isText = panel.kind === "text";
+  const isReport = panel.kind === "report";
+  const Icon = isText ? Type : isReport ? Newspaper : (categoryIcon[panel.category as CategoryKey] ?? ImageIcon);
+  const label = isText ? "文字" : isReport ? "报道" : (categoryMeta.find((meta) => meta.key === panel.category)?.title ?? panel.category ?? "");
 
   const onHeaderPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -329,7 +424,15 @@ export default function BoardPanel({
         <Icon className="h-3.5 w-3.5 shrink-0 text-white/50" />
         <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-white/38">{label}</span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-white/86">
-          {item?.title ?? "已失效的素材"}
+          {isText
+            ? panel.textStyle === "title"
+              ? "标题"
+              : panel.textStyle === "subtitle"
+                ? "小标题"
+                : "注释"
+            : isReport
+              ? (report?.title ?? "报道已删除")
+              : (item?.title ?? "已失效的素材")}
         </span>
         <button
           type="button"
@@ -343,7 +446,27 @@ export default function BoardPanel({
       </div>
 
       <div className="min-h-0 flex-1">
-        {!item ? (
+        {isText ? (
+          <TextPanelBody
+            panel={panel}
+            onChange={(value) => onTextChange(panel.id, value)}
+            onStyleChange={(style) => onTextStyleChange(panel.id, style)}
+          />
+        ) : isReport ? (
+          <ReportPanelBody
+            report={
+              report
+                ? {
+                    id: report.id,
+                    title: report.title,
+                    cover: report.cover,
+                    blockCount: report.blocks.length,
+                  }
+                : undefined
+            }
+            onOpen={() => panel.itemId && onOpenReport(panel.itemId)}
+          />
+        ) : !item ? (
           <EmptyHint text="该素材已不存在" />
         ) : panel.category === "videos" ? (
           <BoardVideo item={item} />

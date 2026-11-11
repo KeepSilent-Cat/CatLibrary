@@ -10,14 +10,35 @@ import type {
   VideoSoundMode,
 } from "@/data/library";
 
+/** 画板面板类型：素材引用 / 报道引用 / 纯文字注释 */
+export type BoardPanelKind = "item" | "report" | "text";
+
+/** 文字面板的三档字号 */
+export type BoardTextStyle = "title" | "subtitle" | "caption";
+
 export interface BoardPanel {
   id: string;
-  category: CategoryKey;
-  itemId: string;
+  kind: BoardPanelKind;
+  /** kind=item 时：素材分类 */
+  category?: CategoryKey;
+  /** kind=item 时是素材 id；kind=report 时是报道 id */
+  itemId?: string;
+  /** kind=text 时的文字内容 */
+  text?: string;
+  textStyle?: BoardTextStyle;
   x: number;
   y: number;
   w: number;
   h: number;
+}
+
+/** 一块画板 = 一套布局，可以建多个并随时切换 */
+export interface Board {
+  id: string;
+  name: string;
+  panels: BoardPanel[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** 截图保存目标：截图库，或某游戏的封面目录 */
@@ -97,12 +118,22 @@ interface AppState {
   bumpCoverRefresh: () => void;
   setGameEmbed: (value: boolean) => void;
   toggleFavorite: (category: CategoryKey, itemId: string) => void;
-  // 画板（工作台）：自由摆放、可拖拽缩放、可持久化的素材面板
-  boardPanels: BoardPanel[];
-  addBoardPanel: (category: CategoryKey, itemId: string) => void;
+  // 画板（工作台）：可以建多个，每个有自己的布局；面板只引用素材库/报道，或写文字
+  boards: Board[];
+  activeBoardId: string;
+  createBoard: (name?: string) => string;
+  renameBoard: (id: string, name: string) => void;
+  deleteBoard: (id: string) => void;
+  setActiveBoard: (id: string) => void;
+  addBoardPanel: (
+    kind: BoardPanelKind,
+    payload: { category?: CategoryKey; itemId?: string; text?: string; textStyle?: BoardTextStyle },
+  ) => void;
   removeBoardPanel: (id: string) => void;
   moveBoardPanel: (id: string, x: number, y: number) => void;
   resizeBoardPanel: (id: string, w: number, h: number) => void;
+  updateBoardPanelText: (id: string, text: string) => void;
+  updateBoardPanelTextStyle: (id: string, textStyle: BoardTextStyle) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -123,7 +154,8 @@ export const useAppStore = create<AppState>()(
       videoFitMode: "cover",
       videoProgress: 0,
       favoriteIds: [],
-      boardPanels: [],
+      boards: [],
+      activeBoardId: "",
       ratingFilter: 0,
       tagFilter: [],
       screenshotShortcut: "ctrl+shift+s",
@@ -180,33 +212,128 @@ export const useAppStore = create<AppState>()(
               : [...state.favoriteIds, key],
           };
         }),
-      addBoardPanel: (category, itemId) =>
+      createBoard: (name) => {
+        const id = `board-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        set((state) => ({
+          boards: [
+            ...state.boards,
+            {
+              id,
+              name: (name ?? "").trim() || `画板 ${state.boards.length + 1}`,
+              panels: [],
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          ],
+          activeBoardId: id,
+        }));
+        return id;
+      },
+      renameBoard: (id, name) =>
+        set((state) => ({
+          boards: state.boards.map((board) =>
+            board.id === id
+              ? { ...board, name: name.trim() || board.name, updatedAt: Date.now() }
+              : board,
+          ),
+        })),
+      deleteBoard: (id) =>
         set((state) => {
-          const offset = state.boardPanels.length % 5;
+          const boards = state.boards.filter((board) => board.id !== id);
           return {
-            boardPanels: [
-              ...state.boardPanels,
-              {
-                id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-                category,
-                itemId,
-                x: 32 + offset * 44,
-                y: 32 + offset * 44,
-                w: 460,
-                h: 340,
-              },
-            ],
+            boards,
+            activeBoardId:
+              state.activeBoardId === id ? (boards[0]?.id ?? "") : state.activeBoardId,
+          };
+        }),
+      setActiveBoard: (id) => set({ activeBoardId: id }),
+      addBoardPanel: (kind, payload) =>
+        set((state) => {
+          const board =
+            state.boards.find((entry) => entry.id === state.activeBoardId) ?? state.boards[0];
+          if (!board) {
+            return {};
+          }
+
+          const offset = board.panels.length % 5;
+          const panel: BoardPanel = {
+            id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+            kind,
+            category: payload.category,
+            itemId: payload.itemId,
+            text: payload.text ?? (kind === "text" ? "" : undefined),
+            textStyle: payload.textStyle ?? (kind === "text" ? "caption" : undefined),
+            x: 32 + offset * 44,
+            y: 32 + offset * 44,
+            w: kind === "text" ? 380 : 460,
+            h: kind === "text" ? 170 : 340,
+          };
+
+          return {
+            boards: state.boards.map((entry) =>
+              entry.id === board.id
+                ? { ...entry, panels: [...entry.panels, panel], updatedAt: Date.now() }
+                : entry,
+            ),
           };
         }),
       removeBoardPanel: (id) =>
-        set((state) => ({ boardPanels: state.boardPanels.filter((panel) => panel.id !== id) })),
+        set((state) => ({
+          boards: state.boards.map((board) =>
+            board.id !== state.activeBoardId
+              ? board
+              : { ...board, panels: board.panels.filter((panel) => panel.id !== id), updatedAt: Date.now() },
+          ),
+        })),
       moveBoardPanel: (id, x, y) =>
         set((state) => ({
-          boardPanels: state.boardPanels.map((panel) => (panel.id === id ? { ...panel, x, y } : panel)),
+          boards: state.boards.map((board) =>
+            board.id !== state.activeBoardId
+              ? board
+              : {
+                  ...board,
+                  panels: board.panels.map((panel) => (panel.id === id ? { ...panel, x, y } : panel)),
+                  updatedAt: Date.now(),
+                },
+          ),
         })),
       resizeBoardPanel: (id, w, h) =>
         set((state) => ({
-          boardPanels: state.boardPanels.map((panel) => (panel.id === id ? { ...panel, w, h } : panel)),
+          boards: state.boards.map((board) =>
+            board.id !== state.activeBoardId
+              ? board
+              : {
+                  ...board,
+                  panels: board.panels.map((panel) => (panel.id === id ? { ...panel, w, h } : panel)),
+                  updatedAt: Date.now(),
+                },
+          ),
+        })),
+      updateBoardPanelText: (id, text) =>
+        set((state) => ({
+          boards: state.boards.map((board) =>
+            board.id !== state.activeBoardId
+              ? board
+              : {
+                  ...board,
+                  panels: board.panels.map((panel) => (panel.id === id ? { ...panel, text } : panel)),
+                  updatedAt: Date.now(),
+                },
+          ),
+        })),
+      updateBoardPanelTextStyle: (id, textStyle) =>
+        set((state) => ({
+          boards: state.boards.map((board) =>
+            board.id !== state.activeBoardId
+              ? board
+              : {
+                  ...board,
+                  panels: board.panels.map((panel) =>
+                    panel.id === id ? { ...panel, textStyle } : panel,
+                  ),
+                  updatedAt: Date.now(),
+                },
+          ),
         })),
     }),
     {
@@ -227,7 +354,8 @@ export const useAppStore = create<AppState>()(
         videoFitMode: state.videoFitMode,
         favoriteIds: state.favoriteIds,
         wallpaper: state.wallpaper,
-        boardPanels: state.boardPanels,
+        boards: state.boards,
+        activeBoardId: state.activeBoardId,
         ratingFilter: state.ratingFilter,
         gameEmbed: state.gameEmbed,
         screenshotShortcut: state.screenshotShortcut,
@@ -235,6 +363,27 @@ export const useAppStore = create<AppState>()(
         chapterDelay: state.chapterDelay,
         autoSkipPages: state.autoSkipPages,
       }),
+      version: 2,
+      // 旧版只有一个画板，面板存在 boardPanels 里；升级时包装成「画板 1」
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (version >= 2) {
+          return state as never;
+        }
+        const legacyPanels = Array.isArray(state.boardPanels) ? state.boardPanels : [];
+        const board = {
+          id: `board-${Date.now().toString(36)}`,
+          name: "画板 1",
+          panels: (legacyPanels as Array<Record<string, unknown>>).map((panel) => ({
+            ...panel,
+            kind: "item",
+          })),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        delete state.boardPanels;
+        return { ...state, boards: [board], activeBoardId: board.id } as never;
+      },
     },
   ),
 );
