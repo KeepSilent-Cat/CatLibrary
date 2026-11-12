@@ -1,3 +1,4 @@
+import ImageMoveControl from "@/components/ImageMoveControl";
 import {
   ArrowLeft,
   BookOpen,
@@ -171,7 +172,7 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
   const [pageIndex, setPageIndex] = useState(0);
   // 图片缓存版本：每次重扫章节后 +1，拼到图片 URL 上强制刷新（保存翻译后立刻看到新图）
   const [imageVersion, setImageVersion] = useState(0);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -939,6 +940,7 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {category==="images"&&itemId&&<ImageMoveControl groupId={itemId} initialPath={readMode==="paged"?currentChapter?.images[currentViewPage?.index??0]:undefined} paths={currentChapter?.images??[]} onMoved={()=>navigate("/images")}/>}
       {/* 顶栏 */}
       <div className="relative flex shrink-0 items-center gap-4 px-5 pb-3 pt-5">
         <button

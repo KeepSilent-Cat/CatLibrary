@@ -24,7 +24,8 @@ export interface MusicTrack {
 /** 音频扩展名（与后端 AUDIO_EXTENSIONS 保持一致） */
 export const AUDIO_FILE_RE = /\.(mp3|flac|wav|m4a|aac|ogg|opus|wma)$/i;
 
-interface MusicPlayerProps {
+export interface MusicPlayerProps {
+  compact?: boolean;
   tracks: MusicTrack[];
   coverImage?: string;
   title: string;
@@ -82,6 +83,7 @@ function pickPreferredVariant(variants: MusicTrack[]): MusicTrack {
 }
 
 export default function MusicPlayer({
+  compact = false,
   tracks,
   coverImage,
   title,
@@ -90,6 +92,7 @@ export default function MusicPlayer({
   sourceCount,
   loadingTracks = false,
 }: MusicPlayerProps) {
+  useEffect(()=>{const audio=audioRef.current;return()=>audio?.pause();},[]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [songIndex, setSongIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -303,7 +306,7 @@ export default function MusicPlayer({
   const progress = duration > 0 ? currentTime / duration : 0;
 
   return (
-    <div className="flex h-full min-h-[420px] flex-col overflow-hidden rounded-[30px] bg-[radial-gradient(circle_at_top_left,rgba(120,160,220,0.18),rgba(20,28,44,0.14)_26%,rgba(6,10,20,0.88)_72%)]">
+    <div className={`flex h-full ${compact?"":"min-h-[420px]"} flex-col overflow-hidden rounded-[30px] bg-[radial-gradient(circle_at_top_left,rgba(120,160,220,0.18),rgba(20,28,44,0.14)_26%,rgba(6,10,20,0.88)_72%)]`}>
       <audio
         ref={audioRef}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
@@ -311,6 +314,7 @@ export default function MusicPlayer({
         onEnded={playNext}
       />
 
+      {compact?<div className="p-3"><p className="truncate text-sm">{currentSong?.title??title}</p><div className="mt-3 flex gap-4"><button onClick={playPrev}>上一首</button><button onClick={togglePlay}>{playing?'暂停':'播放'}</button><button onClick={playNext}>下一首</button></div><input aria-label="音乐播放进度" type="range" min="0" max="1" step="0.001" value={progress} onChange={e=>seek(Number(e.target.value))} className="mt-3 w-full"/></div>:<>
       <div className="grid min-h-0 flex-1 gap-10 p-8 xl:grid-cols-[320px_minmax(0,1fr)]">
         <div className="flex min-h-0 flex-col">
           <div className="relative aspect-square overflow-hidden rounded-[30px] bg-white/6 shadow-[0_28px_90px_rgba(0,0,0,0.34)]">
@@ -545,6 +549,7 @@ export default function MusicPlayer({
           </div>
         </div>
       </div>
+      </>}
     </div>
   );
 }

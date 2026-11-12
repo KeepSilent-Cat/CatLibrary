@@ -1,0 +1,38 @@
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { useState } from 'react';
+import type { LibraryItem } from '@/data/library';
+import { useAppStore } from '@/store/useAppStore';
+import ContentGate from './ContentGate';
+import CategoryPage from '@/pages/CategoryPage';
+import PersistentMusic, { MusicSession } from './PersistentMusic';
+import { ExtraFavorite } from './ExtraFavorite';
+import RandomShowcase from './RandomShowcase';
+const { index } = vi.hoisted(() => ({ index: { images: [] as LibraryItem[], videos: [], games: [], comics: [], screenshots: [], music: [], live2d: [], novels: [] } }));
+vi.mock('@/lib/library-source', async (original) => ({ ...await original<typeof import('@/lib/library-source')>(), loadLibraryIndex: vi.fn(async () => index) }));
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false, invoke: vi.fn(async () => []), convertFileSrc: (p: string) => p }));
+vi.mock('@/components/AddItemsModal', () => ({ default: () => null }));
+vi.mock('@/components/LibraryCard', () => ({ default: ({ item, onClick }: {
+        item: LibraryItem;
+        onClick: (i: LibraryItem) => void;
+    }) => <button onClick={() => onClick(item)}>{item.title}</button> }));
+function item(id: string, rating: 0 | 2 = 0): LibraryItem { return { id, title: 'image-' + id, category: 'images', summary: '', relativePath: id, coverType: 'fallback', previewImages: [], sourceCount: 1, modifiedAt: 0, sourceEntries: [], rating, tags: [] }; }
+beforeEach(() => { useAppStore.setState({ resourceRoot: 'test-fixture', ratingFilter: 0, favoriteIds: [], extraRatings: {}, boards: [], tagFilter: [] }); index.images = []; vi.stubGlobal('ResizeObserver', class {
+    observe() { }
+    disconnect() { }
+}); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+describe('library upgrade privacy and navigation', () => {
+    it('locks on rehydration without losing favorites or boards', async () => { localStorage.setItem('zerocat-settings', JSON.stringify({ version: 2, state: { ratingFilter: 2, favoriteIds: ['music/a', 'board/b'], boards: [{ id: 'b', name: 'test', panels: [], createdAt: 0, updatedAt: 0 }] } })); await useAppStore.persist.rehydrate(); expect(useAppStore.getState().ratingFilter).toBe(0); expect(useAppStore.getState().favoriteIds).toEqual(['music/a', 'board/b']); expect(useAppStore.getState().boards[0].id).toBe('b'); });
+    it('does not mount a restricted detail even when accessed directly', async () => { index.images = [item('adult', 2)]; render(<MemoryRouter initialEntries={['/images/adult']}><Routes><Route path="/images/:itemId" element={<ContentGate category="images"><p>private-detail</p></ContentGate>}/></Routes></MemoryRouter>); expect(await screen.findByText(/此内容不在当前显示范围/)).toBeInTheDocument(); expect(screen.queryByText('private-detail')).not.toBeInTheDocument(); act(() => useAppStore.setState({ ratingFilter: 2 })); expect(await screen.findByText('private-detail')).toBeInTheDocument(); act(() => useAppStore.setState({ ratingFilter: 0 })); expect(screen.queryByText('private-detail')).not.toBeInTheDocument(); });
+    it('restores page fifteen after visiting a detail', async () => { index.images = Array.from({ length: 160 }, (_, n) => item(String(n).padStart(3, '0'))); render(<MemoryRouter initialEntries={['/images']}><Routes><Route path="/images" element={<CategoryPage category="images"/>}/><Route path="/images/:id" element={<Back />}/></Routes></MemoryRouter>); await screen.findByText('image-000'); const input = screen.getAllByTitle('跳转到第几页（回车确认）')[0]; fireEvent.change(input, { target: { value: '15' } }); fireEvent.keyDown(input, { key: 'Enter' }); fireEvent.click(await screen.findByText('image-140')); fireEvent.click(await screen.findByRole('link', { name: '回到列表' })); expect(await screen.findByText('image-140')).toBeInTheDocument(); expect(screen.queryByText('image-000')).not.toBeInTheDocument(); });
+    it('can favorite boards and reports with the same toggling rules', () => { render(<><ExtraFavorite kind="board" id="one"/><ExtraFavorite kind="reports" id="two"/></>); fireEvent.click(screen.getAllByRole('button', { name: '加入收藏' })[0]); fireEvent.click(screen.getByRole('button', { name: '加入收藏' })); expect(useAppStore.getState().favoriteIds).toEqual(['board/one', 'reports/two']); fireEvent.click(screen.getAllByRole('button', { name: '取消收藏' })[0]); expect(useAppStore.getState().favoriteIds).toEqual(['reports/two']); });
+    it('rotates automatically to another visible item', () => { vi.useFakeTimers(); render(<MemoryRouter><RandomShowcase items={[item('a'), item('b')]}/></MemoryRouter>); const before = screen.getByRole('heading').textContent; act(() => vi.advanceTimersByTime(7000)); expect(screen.getByRole('heading').textContent).not.toBe(before); fireEvent.click(screen.getByRole('button', { name: '暂停轮播' })); const paused = screen.getByRole('heading').textContent; act(() => vi.advanceTimersByTime(21000)); expect(screen.getByRole('heading').textContent).toBe(paused); });
+    it('keeps the same playing audio when the detail unmounts, then stops on relock', async () => { useAppStore.setState({ ratingFilter: 2 }); const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(); const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => { }); vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => { }); render(<MusicHarness />); await screen.findByRole('button', { name: '播放' }); fireEvent.click(screen.getByRole('button', { name: '播放' })); await waitFor(() => expect(play).toHaveBeenCalled()); const audio = document.querySelector('audio'); expect(audio).toBeTruthy(); if (audio)
+        audio.currentTime = 25; const calls = pause.mock.calls.length; fireEvent.click(screen.getByRole('button', { name: '离开详情' })); expect(document.querySelector('audio')).toBe(audio); expect(audio?.currentTime).toBe(25); expect(pause.mock.calls.length).toBe(calls); act(() => useAppStore.setState({ ratingFilter: 0 })); await waitFor(() => expect(document.querySelector('audio')).toBeNull()); expect(pause.mock.calls.length).toBeGreaterThan(calls); });
+});
+import { Link } from 'react-router-dom';
+function Back() { return <Link to="/images">回到列表</Link>; }
+const tracks = [{ name: 'song', path: '/fake/song.mp3', relativePath: 'song.mp3', bucket: 'test', format: 'MP3' }];
+function MusicHarness() { const [show, setShow] = useState(true); return <><button onClick={() => setShow(false)}>离开详情</button>{show && <MusicSession tracks={tracks} title="fixture album" summary="" sourceCount={1} rating={2}/>}<PersistentMusic /></>; }

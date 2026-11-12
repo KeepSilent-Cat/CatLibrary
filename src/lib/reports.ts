@@ -1,3 +1,5 @@
+import {useAppStore} from "@/store/useAppStore";
+import {remapMediaPath} from "./media-paths";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { CategoryKey } from "@/data/library";
@@ -173,6 +175,7 @@ export async function loadReports(resourceRoot: string): Promise<Report[]> {
   const raw = await invoke<unknown[]>("list_reports", { resourceRoot });
   return (raw ?? [])
     .map(normalizeReport)
+    .map(report=>{if(!report)return null;const state=useAppStore.getState();return {...report,blocks:report.blocks.map(block=>{if(!block.media)return block;const path=remapMediaPath(block.media.path,resourceRoot,state.resourceRootHistory,state.movedMediaPaths);return path===block.media.path?block:{...block,media:{...block.media,path:convertFileSrc(path)}};})};})
     .filter((report): report is Report => report !== null)
     .sort((left, right) => right.updatedAt - left.updatedAt);
 }

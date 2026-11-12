@@ -192,7 +192,7 @@ function mapItem(item: RawLibraryItem): LibraryItem {
     sourceCount: item.sourceCount,
     modifiedAt: item.modifiedAt,
     sourceEntries: item.sourceEntries,
-    rating: Math.min(Math.max(item.rating ?? 0, 0), 2) as ContentRating,
+    rating: Math.min(Math.max(item.rating ?? 2, 0), 2) as ContentRating,
     tags: item.tags ?? [],
   };
 }

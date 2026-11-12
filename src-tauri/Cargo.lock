@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "cat_library"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "encoding_rs",
  "flate2",
@@ -282,6 +282,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

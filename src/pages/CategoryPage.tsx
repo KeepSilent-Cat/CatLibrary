@@ -1,3 +1,5 @@
+const rememberedSorts = new Map<string,import("@/data/library").SortMode>();
+const rememberedPages = new Map<string,number>();
 import {
   ChevronLeft,
   ChevronRight,
@@ -363,12 +365,16 @@ export default function CategoryPage({
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortMode, setSortMode] = useState<SortMode>("default");
+  const viewKey=resourceRoot+"/"+category+"/"+favoritesOnly;
+  const [sortMode, setSortMode] = useState<SortMode>(()=>rememberedSorts.get(viewKey)??"default");
+  useEffect(()=>{rememberedSorts.set(viewKey,sortMode);},[viewKey,sortMode]);
   const isVideoCategory = category === "videos";
 
   const gridAreaRef = useRef<HTMLDivElement | null>(null);
   const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
-  const [page, setPage] = useState(0);
+  const pageKey = viewKey;
+  const [page, setPage] = useState(()=>rememberedPages.get(pageKey)??0);
+  useEffect(()=>{rememberedPages.set(pageKey,page);},[pageKey,page]);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -631,9 +637,9 @@ export default function CategoryPage({
       jumpToNewestRef.current = false;
       setPage(Number.MAX_SAFE_INTEGER);
     } else {
-      setPage(0);
+      setPage(rememberedPages.get(pageKey)??0);
     }
-  }, [category, sortMode, visibleItems.length, effectivePageSize]);
+  }, [category, sortMode]);
 
   return (
     <section
@@ -661,7 +667,7 @@ export default function CategoryPage({
           </div>
           <div className="flex items-center gap-3">
             <span className="glass-chip px-3 py-1 text-xs text-white/72">
-              {favoritesOnly ? visibleItems.length : items.length} 项{favoritesOnly ? "收藏" : "内容"}
+              {visibleItems.length} 项{favoritesOnly ? "收藏" : "内容"}
             </span>
             {category === "games" ? (
               <button
@@ -687,7 +693,7 @@ export default function CategoryPage({
             <TagFilterControl tags={allTags} />
             <select
               value={sortMode}
-              onChange={(event) => setSortMode(event.target.value as SortMode)}
+              onChange={(event) => {setPage(0);setSortMode(event.target.value as SortMode);}}
               className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs text-white outline-none transition focus:border-white/36 focus:bg-white/14"
             >
               {sortOptions.map((option) => (

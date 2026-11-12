@@ -309,7 +309,7 @@ export default function LibraryCard({
       ) : (
         <div className="relative flex h-full flex-col justify-start p-4" />
       )}
-      {showInfo && onToggleFavorite ? (
+      {onToggleFavorite ? (
         <button
           type="button"
           title={favorite ? "取消收藏" : "收藏"}

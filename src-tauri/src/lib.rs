@@ -93,11 +93,7 @@ fn rating_of(entry: &LibraryMetadataEntry) -> u8 {
   if let Some(rating) = entry.rating {
     return rating.min(2);
   }
-  if entry.adult.unwrap_or(false) {
-    2
-  } else {
-    0
-  }
+  2
 }
 
 /// 规范化标签：去首尾空白、丢弃空串、去重（保持输入顺序）
@@ -473,7 +469,7 @@ fn add_library_items(
         title: Some(display_name),
         summary: None,
         adult: None,
-        rating: None,
+        rating: Some(2),
         tags: None,
         alt_name: None,
         launch_path: None,
@@ -1412,16 +1408,7 @@ fn set_video_cover(
   group_id: String,
   image: CoverImageInput,
 ) -> Result<String, String> {
-  let root = PathBuf::from(&resource_root);
-  let cover_dir = root.join("videos").join(&group_id).join("cover");
-  fs::create_dir_all(&cover_dir).map_err(|error| error.to_string())?;
-  clear_cover_dir_images(&cover_dir)?;
-
-  let bytes = decode_base64(&image.data)?;
-  let file_name = format!("cover_{}_{}", now_timestamp(), sanitize_file_name(&image.name));
-  let cover_path = cover_dir.join(file_name);
-  fs::write(&cover_path, bytes).map_err(|error| error.to_string())?;
-  Ok(path_to_string(cover_path))
+  save_video_cover_checked(Path::new(&resource_root),&group_id,&image).map(path_to_string)
 }
 
 #[tauri::command]
@@ -2330,16 +2317,25 @@ fn load_library_metadata(app: &AppHandle, root: &Path) -> Result<HashMap<String,
     }
 
     match fs::read_to_string(&metadata_file) {
-      Ok(content) => {
-        return serde_json::from_str::<HashMap<String, LibraryMetadataEntry>>(&content)
-          .map_err(|error| error.to_string())
-      }
+      Ok(_) => return load_classified_metadata(&metadata_file),
       Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => continue,
       Err(error) => return Err(error.to_string()),
     }
   }
 
   Ok(HashMap::new())
+}
+
+fn load_classified_metadata(metadata_file:&Path)->Result<HashMap<String,LibraryMetadataEntry>,String>{
+ static LOCK:std::sync::Mutex<()>=std::sync::Mutex::new(());let _guard=LOCK.lock().map_err(|_|"分级迁移锁不可用")?;
+ let content=fs::read_to_string(metadata_file).map_err(|e|e.to_string())?;
+ let mut metadata=serde_json::from_str::<HashMap<String,LibraryMetadataEntry>>(&content).map_err(|e|e.to_string())?;
+ let marker=metadata_file.with_extension("adult-default-v1");
+ if !marker.exists(){let backup=metadata_file.with_extension("before-adult-default.json");if !backup.exists(){fs::copy(metadata_file,backup).map_err(|e|e.to_string())?;}
+ for entry in metadata.values_mut(){entry.rating=Some(2);entry.adult=Some(true);}
+ write_metadata_file(metadata_file,&serde_json::to_string_pretty(&metadata).map_err(|e|e.to_string())?)?;
+ fs::write(marker,b"adult-default-v1").map_err(|e|e.to_string())?;}
+ Ok(metadata)
 }
 
 fn write_library_metadata(
@@ -2354,7 +2350,7 @@ fn write_library_metadata(
 
   for metadata_file in candidates {
     match write_metadata_file(&metadata_file, &content) {
-      Ok(()) => return Ok(()),
+      Ok(()) => { fs::write(metadata_file.with_extension("adult-default-v1"),b"adult-default-v1").map_err(|e|e.to_string())?; return Ok(()); },
       Err(error) => errors.push(format!("{} => {}", metadata_file.display(), error)),
     }
   }
@@ -2386,7 +2382,9 @@ fn write_metadata_file(path: &Path, content: &str) -> Result<(), String> {
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
   }
 
-  fs::write(path, content).map_err(|error| error.to_string())
+  let temp=path.with_extension(format!("tmp-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos()));
+  fs::write(&temp,content).map_err(|e|e.to_string())?;
+  if let Err(e)=fs::rename(&temp,path){let _=fs::remove_file(&temp);return Err(e.to_string());}Ok(())
 }
 
 fn metadata_file_path(root: &Path) -> PathBuf {
@@ -3571,10 +3569,14 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       scan_library,
       resolve_initial_resource_root,
+      read_backup_settings,
+      prepare_portable_backup,
+      verify_content_password,
       save_library_metadata,
       add_library_items,
       add_comic_chapter,
       scan_comic_pages,
+      move_image_to_collection,
       scan_image_pages,
       read_image_base64,
       save_comic_translation,
@@ -3694,4 +3696,336 @@ mod startup_profile_tests {
     assert_eq!(fs::read(legacy.join("Local Storage/leveldb/settings")).unwrap(), b"saved-settings");
     fs::remove_dir_all(root).unwrap();
   }
+}
+
+#[tauri::command]
+fn verify_content_password(password: String) -> bool {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(password.as_bytes()))
+        == "19e3ca5b2ffc8791ed644c18348df1eb30f3e4ead5609fcea4f507a154cf4293"
+}
+
+#[tauri::command]
+fn prepare_portable_backup(
+    app: AppHandle,
+    resource_root: String,
+    settings_json: String,
+) -> Result<String, String> {
+    let root = PathBuf::from(&resource_root);
+    if !root.is_dir() {
+        return Err("资源目录不存在，请先确认设置".into());
+    }
+    let settings: serde_json::Value =
+        serde_json::from_str(&settings_json).map_err(|e| e.to_string())?;
+    let parent = root.parent().ok_or("无法确定资源库父目录")?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let dir = parent
+        .join("data")
+        .join("backup-checkpoints")
+        .join(stamp.to_string());
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fs::write(
+        dir.join("web-settings.json"),
+        serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let metadata = load_library_metadata(&app, &root)?;
+    fs::write(
+        dir.join("metadata.json"),
+        serde_json::to_vec_pretty(&metadata).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let exe = env::current_exe().map_err(|e| e.to_string())?;
+    let guide=format!("备份准备完成。此操作只保存设置快照，不复制庞大素材。\n请正常退出应用后，把整个资源库父文件夹复制到移动硬盘：{}\n实际资源目录：{}\n当前程序位置：{}\n若程序不在上述父文件夹内，也要一并备份程序所在文件夹。\n设置/收藏/画板快照（新电脑可在设置中选择恢复）：{}\n外部引用的素材仍需单独复制；此按钮不保证外部文件已被包含。请保留原目录，使用复制而不是剪切。\n",parent.display(),root.display(),exe.display(),dir.display());
+    fs::write(dir.join("备份说明.txt"), &guide).map_err(|e| e.to_string())?;
+    Ok(guide)
+}
+
+fn move_image_checked(
+    root: &Path,
+    source_group: &str,
+    target_group: &str,
+    source_path: &Path,
+) -> Result<PathBuf, String> {
+    for id in [source_group, target_group] {
+        let mut c = Path::new(id).components();
+        if !matches!(c.next(), Some(std::path::Component::Normal(_))) || c.next().is_some() {
+            return Err("合集路径不合法".into());
+        }
+    }
+    if source_group == target_group {
+        return Err("请选择其他合集".into());
+    }
+    let images = root
+        .join("images")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let from = images
+        .join(source_group)
+        .join("source")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let target_group_path = images
+        .join(target_group)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !from.starts_with(&images) || !target_group_path.starts_with(&images) {
+        return Err("合集不能位于图片库之外".into());
+    }
+    let source = source_path.canonicalize().map_err(|e| e.to_string())?;
+    if !source.is_file() || !source.starts_with(&from) || !has_extension(&source, IMAGE_EXTENSIONS)
+    {
+        return Err("只能移动来源合集内的图片原文件".into());
+    }
+    let to_dir = target_group_path.join("source");
+    fs::create_dir_all(&to_dir).map_err(|e| e.to_string())?;
+    let to_dir = to_dir.canonicalize().map_err(|e| e.to_string())?;
+    if !to_dir.starts_with(&target_group_path) {
+        return Err("目标路径越界".into());
+    }
+    let to = to_dir.join(source.file_name().ok_or("文件名无效")?);
+    if to.exists() {
+        return Err("目标已有同名文件，未移动或覆盖".into());
+    }
+    let copied = (|| -> Result<(), String> {
+        use std::io;
+        let mut input = fs::File::open(&source).map_err(|e| e.to_string())?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&to)
+            .map_err(|e| e.to_string())?;
+        if let Err(e) = io::copy(&mut input, &mut output).and_then(|_| output.sync_all()) {
+            let _ = fs::remove_file(&to);
+            return Err(e.to_string());
+        }
+        Ok(())
+    })();
+    copied.map_err(|e| format!("移动未完成，原文件保留：{e}"))?;
+    if let Err(e) = fs::remove_file(&source) {
+        let _ = fs::remove_file(&to);
+        return Err(format!("原文件未删除，已取消移动：{e}"));
+    }
+    Ok(to)
+}
+#[tauri::command]
+fn move_image_to_collection(
+    app: AppHandle,
+    resource_root: String,
+    source_group: String,
+    target_group: String,
+    source_path: String,
+) -> Result<String, String> {
+    let root = PathBuf::from(resource_root);
+    let metadata = load_library_metadata(&app, &root)?;
+    let from = metadata
+        .get(&format!("images/{source_group}"))
+        .cloned()
+        .unwrap_or_default();
+    let to = metadata
+        .get(&format!("images/{target_group}"))
+        .cloned()
+        .unwrap_or_default();
+    if rating_of(&to) < rating_of(&from) {
+        return Err("为避免受限图片进入全年龄合集，请先提高目标合集分级".into());
+    }
+    move_image_checked(&root, &source_group, &target_group, Path::new(&source_path))
+        .map(path_to_string)
+}
+
+fn save_video_cover_checked(
+    root: &Path,
+    group_id: &str,
+    image: &CoverImageInput,
+) -> Result<PathBuf, String> {
+    let mut c = Path::new(group_id).components();
+    if !matches!(c.next(), Some(std::path::Component::Normal(_))) || c.next().is_some() {
+        return Err("视频合集路径不合法".into());
+    }
+    let videos = root
+        .join("videos")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let group = videos
+        .join(group_id)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !group.starts_with(&videos) {
+        return Err("视频合集越界".into());
+    }
+    let bytes = decode_base64(&image.data)?;
+    if bytes.is_empty() {
+        return Err("封面不能为空".into());
+    }
+    let cover_dir = group.join("cover");
+    fs::create_dir_all(&cover_dir).map_err(|e| e.to_string())?;
+    let cover_dir = cover_dir.canonicalize().map_err(|e| e.to_string())?;
+    if !cover_dir.starts_with(&group) {
+        return Err("封面目录越界".into());
+    }
+    let previous = collect_matching_files(&cover_dir, IMAGE_EXTENSIONS, 0);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let file = cover_dir.join(format!(
+        "cover_{}_{}",
+        stamp,
+        sanitize_file_name(&image.name)
+    ));
+    let temp = cover_dir.join(format!(".pending-{stamp}"));
+    fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    if let Err(e) = fs::rename(&temp, &file) {
+        let _ = fs::remove_file(temp);
+        return Err(e.to_string());
+    }
+    for old in previous {
+        if old != file {
+            let _ = fs::remove_file(old);
+        }
+    }
+    Ok(file)
+}
+#[tauri::command]
+fn read_backup_settings(path: String) -> Result<String, String> {
+    let p = Path::new(&path);
+    if p.file_name().and_then(|s| s.to_str()) != Some("web-settings.json") {
+        return Err("请选择备份检查点内的web-settings.json".into());
+    }
+    if fs::metadata(p).map_err(|e| e.to_string())?.len() > 50 * 1024 * 1024 {
+        return Err("设置文件过大".into());
+    }
+    let text = fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let values: HashMap<String, Option<String>> =
+        serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    serde_json::to_string(&values).map_err(|e| e.to_string())
+}
+#[cfg(test)]
+mod library_upgrade_tests {
+    use super::*;
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let p = env::temp_dir().join(format!(
+                "catlibrary-upgrade-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            assert!(self.0.starts_with(env::temp_dir()));
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn existing_ratings_migrate_once_and_keep_original_backup() {
+        let f = Fixture::new();
+        let p = f.0.join("metadata.json");
+        let original =
+            r#"{"images/a":{"rating":0,"title":"全年龄旧标记"},"videos/b":{"adult":false}}"#;
+        fs::write(&p, original).unwrap();
+        let mut first = load_classified_metadata(&p).unwrap();
+        assert!(first.values().all(|e| rating_of(e) == 2));
+        assert_eq!(
+            fs::read_to_string(p.with_extension("before-adult-default.json")).unwrap(),
+            original
+        );
+        first.get_mut("images/a").unwrap().rating = Some(0);
+        write_metadata_file(&p, &serde_json::to_string(&first).unwrap()).unwrap();
+        assert_eq!(
+            rating_of(
+                load_classified_metadata(&p)
+                    .unwrap()
+                    .get("images/a")
+                    .unwrap()
+            ),
+            0
+        );
+        assert_eq!(rating_of(&LibraryMetadataEntry::default()), 2);
+    }
+    #[test]
+    fn moves_one_image_without_touching_other_files() {
+        let f = Fixture::new();
+        for d in ["images/a/source", "images/b/source"] {
+            fs::create_dir_all(f.0.join(d)).unwrap();
+        }
+        let from = f.0.join("images/a/source/one.png");
+        fs::write(&from, b"selected-image").unwrap();
+        fs::write(f.0.join("images/a/source/two.png"), b"other-image").unwrap();
+        let to = move_image_checked(&f.0, "a", "b", &from).unwrap();
+        assert!(!from.exists());
+        assert_eq!(fs::read(to).unwrap(), b"selected-image");
+        assert_eq!(
+            fs::read(f.0.join("images/a/source/two.png")).unwrap(),
+            b"other-image"
+        );
+    }
+    #[test]
+    fn refuses_collision_and_outside_paths_without_data_loss() {
+        let f = Fixture::new();
+        for d in ["images/a/source", "images/b/source"] {
+            fs::create_dir_all(f.0.join(d)).unwrap();
+        }
+        let from = f.0.join("images/a/source/one.png");
+        fs::write(&from, b"original").unwrap();
+        let dest = f.0.join("images/b/source/one.png");
+        fs::write(&dest, b"keep-target").unwrap();
+        assert!(move_image_checked(&f.0, "a", "b", &from).is_err());
+        assert_eq!(fs::read(&from).unwrap(), b"original");
+        assert_eq!(fs::read(dest).unwrap(), b"keep-target");
+        assert!(move_image_checked(&f.0, "a", "../b", &from).is_err());
+        let outside = f.0.join("outside.png");
+        fs::write(&outside, b"outside").unwrap();
+        assert!(move_image_checked(&f.0, "a", "b", &outside).is_err());
+        assert!(outside.exists());
+    }
+    #[test]
+    fn invalid_cover_cannot_delete_existing_cover() {
+        let f = Fixture::new();
+        let cover = f.0.join("videos/a/cover");
+        fs::create_dir_all(&cover).unwrap();
+        fs::write(cover.join("old.png"), b"old-cover").unwrap();
+        let input = CoverImageInput {
+            name: "frame.png".into(),
+            data: "%%%".into(),
+        };
+        assert!(save_video_cover_checked(&f.0, "a", &input).is_err());
+        assert_eq!(fs::read(cover.join("old.png")).unwrap(), b"old-cover");
+    }
+    #[test]
+    fn successful_cover_replaces_only_after_write() {
+        let f = Fixture::new();
+        let cover = f.0.join("videos/a/cover");
+        fs::create_dir_all(&cover).unwrap();
+        fs::write(cover.join("old.png"), b"old-cover").unwrap();
+        let input = CoverImageInput {
+            name: "frame.png".into(),
+            data: "aGVsbG8=".into(),
+        };
+        let p = save_video_cover_checked(&f.0, "a", &input).unwrap();
+        assert_eq!(fs::read(p).unwrap(), b"hello");
+        assert!(!cover.join("old.png").exists());
+    }
+    #[test]
+    fn backup_snapshot_validates_shape_and_file_name() {
+        let f = Fixture::new();
+        let p = f.0.join("web-settings.json");
+        fs::write(&p, r#"{"zerocat-settings":"stored","reader":"saved"}"#).unwrap();
+        assert!(read_backup_settings(path_to_string(p.clone()))
+            .unwrap()
+            .contains("stored"));
+        fs::write(&p, r#"{"bad":42}"#).unwrap();
+        assert!(read_backup_settings(path_to_string(p)).is_err());
+        assert!(read_backup_settings(path_to_string(f.0.join("metadata.json"))).is_err());
+    }
 }

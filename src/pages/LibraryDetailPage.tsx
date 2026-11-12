@@ -1,3 +1,4 @@
+import {MusicSession} from "@/components/PersistentMusic";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, PanelRight, Play, Settings2, Tag, Trash2, Wallpaper, X } from "lucide-react";
@@ -6,7 +7,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { categoryMeta, RATING_OPTIONS, type CategoryKey, type ContentRating, type LibraryItem } from "@/data/library";
 import { clearLibraryIndexCache, filterLibraryIndex, loadLibraryIndex, saveLibraryMetadata } from "@/lib/library-source";
 import { useAppStore } from "@/store/useAppStore";
-import MusicPlayer, { type MusicTrack } from "@/components/MusicPlayer";
+import { type MusicTrack } from "@/components/MusicPlayer";
 import ImageCoverPicker from "@/components/ImageCoverPicker";
 import Live2DPanel from "@/components/Live2DPanel";
 import NovelReader from "@/components/NovelReader";
@@ -25,6 +26,7 @@ interface VideoTrack {
 }
 
 export default function LibraryDetailPage({ category }: { category: CategoryKey }) {
+  const videoFrameRef=useRef<HTMLVideoElement>(null);
   const navigate = useNavigate();
   const { itemId } = useParams();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
@@ -137,7 +139,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   }, [category, resourceRoot, ratingFilter]);
 
   useEffect(() => {
-    setSidebarOpen(isMusic);
+    setSidebarOpen(false);
   }, [isMusic, itemId]);
 
   const currentItem = useMemo(
@@ -829,7 +831,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                 <NovelReader itemId={currentItem.id} />
               </div>
             ) : isMusic ? (
-              <MusicPlayer
+              <MusicSession rating={currentItem.rating}
                 tracks={musicTracks}
                 coverImage={currentItem.coverImage}
                 title={currentItem.altName ?? currentItem.title}
@@ -840,6 +842,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
               />
             ) : (
               <div className="relative overflow-hidden rounded-[28px] bg-black/16">
+              {isVideos&&<button disabled={videoCoverBusy} className="rounded-full border border-white/20 px-4 py-2" onClick={async()=>{const video=videoFrameRef.current;if(!video||!currentItem||video.readyState<2||video.seeking){setSaveError('请先播放到需要的画面');return;}setVideoCoverBusy(true);try{const c=document.createElement('canvas');c.width=video.videoWidth;c.height=video.videoHeight;const ctx=c.getContext('2d');if(!ctx)throw Error('无法创建画布');ctx.drawImage(video,0,0);await invoke('set_video_cover',{resourceRoot,groupId:currentItem.id,image:{name:'frame.png',data:c.toDataURL('image/png').split(',')[1]}});clearLibraryIndexCache(resourceRoot);await refreshLibraryState();setSavedToast('当前帧已保存为封面');}catch(e){setSaveError('保存当前帧失败：'+String(e));}finally{setVideoCoverBusy(false);}}}>用当前播放画面设置封面</button>}
               {isVideos && videoTracks.length > 0 ? (
                 <div className="flex items-center gap-2 overflow-x-auto border-b border-white/10 bg-black/55 px-3 py-2">
                   <button
@@ -887,7 +890,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     正在读取视频列表…
                   </div>
                 ) : (
-                  <video
+                  <video crossOrigin="anonymous" ref={videoFrameRef}
                     key={videoTracks[videoIndex]?.path ?? currentItem.previewMedia ?? "empty"}
                     src={
                       videoTracks[videoIndex]?.path

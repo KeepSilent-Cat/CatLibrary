@@ -31,3 +31,5 @@ src-tauri/.tauri-runtime
 
 # Private local rendering fixtures and diagnostic output
 /tmp/render-check/
+/tmp/
+/output/

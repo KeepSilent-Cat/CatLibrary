@@ -1,3 +1,4 @@
+import {ExtraFavorite,ExtraRating} from "@/components/ExtraFavorite";
 import { LayoutGrid, Pencil, Plus, Trash2, Type } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -22,7 +23,9 @@ export default function BoardPage() {
   const resourceRoot = useAppStore((state) => state.resourceRoot);
   const ratingFilter = useAppStore((state) => state.ratingFilter);
 
-  const boards = useAppStore((state) => state.boards);
+  const allBoards = useAppStore((state) => state.boards);
+  const ratings=useAppStore(s=>s.extraRatings);
+  const boards=allBoards.filter(b=>(ratings["board/"+b.id]??2)<=ratingFilter);
   const activeBoardId = useAppStore((state) => state.activeBoardId);
   const createBoard = useAppStore((state) => state.createBoard);
   const renameBoard = useAppStore((state) => state.renameBoard);
@@ -45,10 +48,10 @@ export default function BoardPage() {
 
   // 至少保证有一块画板
   useEffect(() => {
-    if (boards.length === 0) {
+    if (allBoards.length === 0 && ratingFilter===2) {
       createBoard("画板 1");
     }
-  }, [boards.length, createBoard]);
+  }, [allBoards.length, createBoard,ratingFilter]);
 
   const activeBoard = boards.find((board) => board.id === activeBoardId) ?? boards[0];
 
@@ -114,12 +117,13 @@ export default function BoardPage() {
 
   const reportMap = useMemo(() => {
     const map = new Map<string, Report>();
-    for (const report of reports) {
+    for (const report of reports.filter(r=>(ratings["reports/"+r.id]??2)<=ratingFilter)) {
       map.set(report.id, report);
     }
     return map;
-  }, [reports]);
+  }, [reports,ratings,ratingFilter]);
 
+  useEffect(()=>{if(boards.length&&!boards.some(b=>b.id===activeBoardId))setActiveBoard(boards[0].id);},[boards,activeBoardId,setActiveBoard]);
   const panels = activeBoard?.panels ?? [];
 
   const startRename = () => {
@@ -178,6 +182,7 @@ export default function BoardPage() {
         </div>
       </div>
 
+      {activeBoard&&<div className="mb-3 flex gap-3"><ExtraFavorite kind="board" id={activeBoard.id}/><ExtraRating kind="board" id={activeBoard.id}/></div>}
       {/* 画板切换 */}
       <div className="mb-3 flex shrink-0 flex-wrap items-center gap-1.5">
         {boards.map((board) =>
@@ -216,7 +221,7 @@ export default function BoardPage() {
         )}
         <button
           type="button"
-          onClick={() => createBoard()}
+          disabled={ratingFilter<2} title="新增画板默认为18+，请先解锁显示全部" onClick={() => createBoard()}
           className="inline-flex items-center gap-1 rounded-full border border-dashed border-white/22 px-3 py-1.5 text-xs text-white/55 transition hover:border-sky-300/45 hover:text-sky-100"
         >
           <Plus className="h-3 w-3" />
@@ -322,7 +327,7 @@ export default function BoardPage() {
       <BoardAddPicker
         open={pickerOpen}
         index={visibleIndex}
-        reports={reports}
+        reports={reports.filter(r=>(ratings["reports/"+r.id]??2)<=ratingFilter)}
         onClose={() => setPickerOpen(false)}
         onPick={(payload) => {
           if (payload.kind === "report") {

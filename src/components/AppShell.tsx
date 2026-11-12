@@ -1,3 +1,4 @@
+import PersistentMusic from "./PersistentMusic";
 import { BookOpen, BookText, Camera, Gamepad2, House, ImageIcon, LayoutGrid, Loader2, Music, Newspaper, PlaySquare, Settings2, Sparkles, Star } from "lucide-react";
 import { Suspense, useEffect, useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
@@ -49,17 +50,17 @@ export function formatShortcut(shortcut: string): string {
 
 const navItems = [
   { to: "/", label: "首页", icon: House, exact: true },
+  { to: "/novels", label: "小说", icon: BookText },
   { to: "/images", label: "图片", icon: ImageIcon },
+  { to: "/comics", label: "漫画", icon: BookOpen },
+  { to: "/music", label: "音乐", icon: Music },
   { to: "/videos", label: "视频", icon: PlaySquare },
   { to: "/games", label: "游戏", icon: Gamepad2 },
-  { to: "/comics", label: "漫画", icon: BookOpen },
-  { to: "/screenshots", label: "截图", icon: Camera },
-  { to: "/music", label: "音乐", icon: Music },
   { to: "/live2d", label: "Live2D", icon: Sparkles },
-  { to: "/novels", label: "小说", icon: BookText },
-  { to: "/favorites", label: "收藏", icon: Star },
+  { to: "/screenshots", label: "截图", icon: Camera },
   { to: "/board", label: "画板", icon: LayoutGrid },
   { to: "/reports", label: "报道", icon: Newspaper },
+  { to: "/favorites", label: "收藏", icon: Star },
   { to: "/settings", label: "设置", icon: Settings2 },
 ];
 
@@ -99,6 +100,7 @@ export default function AppShell() {
   const openScreenshot = useAppStore((state) => state.openScreenshot);
   const savedToast = useAppStore((state) => state.savedToast);
   const setSavedToast = useAppStore((state) => state.setSavedToast);
+  const ratingFilter=useAppStore(s=>s.ratingFilter);
   const wallpaper = useAppStore((state) => state.wallpaper);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -138,7 +140,7 @@ export default function AppShell() {
       <div
         className="immersive-background"
         style={
-          wallpaper
+          wallpaper && ratingFilter===2
             ? {
                 backgroundImage: `linear-gradient(180deg, rgba(17, 24, 39, 0.06), rgba(17, 24, 39, 0.16)), url("${wallpaper}")`,
               }
@@ -201,6 +203,7 @@ export default function AppShell() {
         </div>
       </div>
 
+      <PersistentMusic />
       <ScreenshotOverlay />
     </div>
   );

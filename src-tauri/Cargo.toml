@@ -1,6 +1,6 @@
 [package]
 name = "cat_library"
-version = "0.1.4"
+version = "0.2.0"
 description = "ZeroCat local media index desktop shell"
 authors = ["ZeroCat"]
 license = ""
@@ -18,6 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+sha2 = "=0.10.9"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.11.3", features = ["custom-protocol", "protocol-asset"] }

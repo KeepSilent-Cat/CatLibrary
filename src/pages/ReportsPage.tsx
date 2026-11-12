@@ -1,3 +1,4 @@
+import {ExtraFavorite,ExtraRating} from "@/components/ExtraFavorite";
 import { ChevronLeft, ChevronRight, FileText, LayoutGrid, List, Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -34,9 +35,11 @@ function readStoredView(): ViewMode {
 }
 
 export default function ReportsPage() {
+  const ratings=useAppStore(s=>s.extraRatings),filter=useAppStore(s=>s.ratingFilter);
   const navigate = useNavigate();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
-  const [reports, setReports] = useState<Report[]>([]);
+  const [allReports, setReports] = useState<Report[]>([]);
+  const reports=allReports.filter(r=>(ratings["reports/"+r.id]??2)<=filter);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -94,6 +97,7 @@ export default function ReportsPage() {
   };
 
   const createNew = async () => {
+    if(filter<2){setError("新增报道默认18+，请先在设置解锁显示全部后创建。");return;}
     const report = createReport();
     setReports([report, ...reports]);
     setPage(0);
@@ -233,6 +237,7 @@ export default function ReportsPage() {
                       <p className="mt-2 text-[11px] text-white/35">更新于 {formatTime(report.updatedAt)}</p>
                     </div>
                   </button>
+                  <ExtraFavorite kind="reports" id={report.id}/><ExtraRating kind="reports" id={report.id}/>
                   <button
                     type="button"
                     onClick={() => void removeReport(report)}

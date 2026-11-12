@@ -8,7 +8,7 @@ export type VideoPreviewBehavior = "loop_30" | "stop_30" | "full";
 export type VideoSoundMode = "all" | "hover" | "selected";
 export type VideoFitMode = "cover" | "contain";
 
-/** 内容分级：0=全年龄 1=擦边R15 2=18+（添加时默认全年龄） */
+/** 内容分级：0=全年龄 1=擦边R15 2=18+（添加时默认18+） */
 export type ContentRating = 0 | 1 | 2;
 
 export const RATING_OPTIONS: Array<{
@@ -21,7 +21,7 @@ export const RATING_OPTIONS: Array<{
     value: 0,
     label: "全年龄",
     short: "",
-    description: "所有年龄可看，添加时默认此项",
+    description: "所有年龄可看，需明确标记为此项",
   },
   {
     value: 1,
@@ -33,7 +33,7 @@ export const RATING_OPTIONS: Array<{
     value: 2,
     label: "成人 · 18+",
     short: "18+",
-    description: "成人内容，默认在列表中隐藏",
+    description: "新增内容默认此项，仅解锁后显示",
   },
 ];
 

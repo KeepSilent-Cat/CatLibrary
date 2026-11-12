@@ -1,3 +1,4 @@
+import RandomShowcase from "@/components/RandomShowcase";
 import {
   ArrowRight,
   BookOpen,
@@ -100,6 +101,7 @@ export default function Home() {
     return all.sort((left, right) => right.item.modifiedAt - left.item.modifiedAt).slice(0, 10);
   }, [visibleIndex]);
 
+  const showcaseItems=Object.values(visibleIndex).flat();
   return (
     <section className="glass-panel relative h-full min-h-0 overflow-y-auto rounded-[32px]">
       <div className="p-6">
@@ -131,7 +133,7 @@ export default function Home() {
                 {loading ? "—" : totalCount}
               </p>
               <p className="mt-2 text-xs text-white/52">
-                {categoryMeta.length} 间藏室 · {totalCount} 件藏品
+                {categoryMeta.length} 类馆藏 · {totalCount} 件藏品
               </p>
             </div>
           </div>
@@ -166,6 +168,8 @@ export default function Home() {
           </div>
         </div>
 
+        <div className="mt-5 flex gap-4">{[["/favorites","收藏"],["/board","画板"],["/reports","报道 / 频道"]].map(([to,label])=><button key={to} className="rounded-2xl border border-white/20 p-5" onClick={()=>navigate(to)}>{label}</button>)}</div>
+        <RandomShowcase items={showcaseItems}/>
         {/* 最近入馆：跨分类最近修改的条目 */}
         {recentItems.length > 0 ? (
           <div className="mt-8">

@@ -47,6 +47,11 @@ export type ScreenshotTarget =
   | { type: "game-cover"; groupId: string };
 
 interface AppState {
+  resourceRootHistory:string[];
+  movedMediaPaths:Record<string,string>;
+  rememberMediaMove:(from:string,to:string)=>void;
+  extraRatings:Record<string,ContentRating>;
+  setExtraRating:(key:string,rating:ContentRating)=>void;
   resourceRoot: string;
   relativeModeEnabled: boolean;
   previewMode: PreviewMode;
@@ -117,7 +122,7 @@ interface AppState {
   resetWallpaper: () => void;
   bumpCoverRefresh: () => void;
   setGameEmbed: (value: boolean) => void;
-  toggleFavorite: (category: CategoryKey, itemId: string) => void;
+  toggleFavorite: (category: CategoryKey | "board" | "reports", itemId: string) => void;
   // 画板（工作台）：可以建多个，每个有自己的布局；面板只引用素材库/报道，或写文字
   boards: Board[];
   activeBoardId: string;
@@ -139,6 +144,9 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      resourceRootHistory:[],
+      movedMediaPaths:{},
+      rememberMediaMove:(from,to)=>set(state=>({movedMediaPaths:{...state.movedMediaPaths,[from]:to}})),
       resourceRoot: "d:\\CatLibrary\\library",
       relativeModeEnabled: true,
       previewMode: "hover",
@@ -153,6 +161,8 @@ export const useAppStore = create<AppState>()(
       videoSoundMode: "hover",
       videoFitMode: "cover",
       videoProgress: 0,
+      extraRatings:{},
+      setExtraRating:(key,rating)=>set(state=>({extraRatings:{...state.extraRatings,[key]:rating}})),
       favoriteIds: [],
       boards: [],
       activeBoardId: "",
@@ -168,7 +178,7 @@ export const useAppStore = create<AppState>()(
       autoPlaySpeed: 300,
       chapterDelay: 3,
       autoSkipPages: 0,
-      setResourceRoot: (value) => set({ resourceRoot: value }),
+      setResourceRoot: (value) => set(state=>({resourceRoot:value,resourceRootHistory:[...new Set([...state.resourceRootHistory,...(state.resourceRoot!==value?[state.resourceRoot]:[])])]})),
       setRelativeModeEnabled: (value) => set({ relativeModeEnabled: value }),
       setPreviewMode: (value) => set({ previewMode: value }),
       setImagePreviewBehavior: (value) => set({ imagePreviewBehavior: value }),
@@ -339,6 +349,8 @@ export const useAppStore = create<AppState>()(
     {
       name: "zerocat-settings",
       partialize: (state) => ({
+        resourceRootHistory:state.resourceRootHistory,
+        movedMediaPaths:state.movedMediaPaths,
         resourceRoot: state.resourceRoot,
         relativeModeEnabled: state.relativeModeEnabled,
         previewMode: state.previewMode,
@@ -352,17 +364,19 @@ export const useAppStore = create<AppState>()(
         videoMuted: state.videoMuted,
         videoSoundMode: state.videoSoundMode,
         videoFitMode: state.videoFitMode,
+        extraRatings:state.extraRatings,
         favoriteIds: state.favoriteIds,
         wallpaper: state.wallpaper,
         boards: state.boards,
         activeBoardId: state.activeBoardId,
-        ratingFilter: state.ratingFilter,
+
         gameEmbed: state.gameEmbed,
         screenshotShortcut: state.screenshotShortcut,
         autoPlaySpeed: state.autoPlaySpeed,
         chapterDelay: state.chapterDelay,
         autoSkipPages: state.autoSkipPages,
       }),
+      merge: (saved, current) => ({ ...current, ...(saved as Partial<AppState>), ratingFilter: 0 }),
       version: 2,
       // 旧版只有一个画板，面板存在 boardPanels 里；升级时包装成「画板 1」
       migrate: (persisted, version) => {

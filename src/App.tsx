@@ -1,3 +1,4 @@
+import ContentGate from "@/components/ContentGate";
 import { Suspense, lazy, useEffect } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
@@ -55,26 +56,26 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/" element={<Home />} />
-            <Route path="/images" element={<CategoryPage category="images" />} />
-            <Route path="/images/:itemId" element={<ComicReaderPage category="images" />} />
-            <Route path="/videos" element={<CategoryPage category="videos" />} />
-            <Route path="/videos/:itemId" element={<LibraryDetailPage category="videos" />} />
-            <Route path="/games" element={<CategoryPage category="games" />} />
-            <Route path="/games/:itemId" element={<LibraryDetailPage category="games" />} />
-            <Route path="/comics" element={<CategoryPage category="comics" />} />
-            <Route path="/comics/:itemId" element={<ComicReaderPage />} />
-            <Route path="/screenshots" element={<CategoryPage category="screenshots" />} />
-            <Route path="/screenshots/:itemId" element={<LibraryDetailPage category="screenshots" />} />
-            <Route path="/music" element={<CategoryPage category="music" />} />
-            <Route path="/music/:itemId" element={<LibraryDetailPage category="music" />} />
-            <Route path="/live2d" element={<CategoryPage category="live2d" />} />
-            <Route path="/live2d/:itemId" element={<LibraryDetailPage category="live2d" />} />
-            <Route path="/novels" element={<CategoryPage category="novels" />} />
-            <Route path="/novels/:itemId" element={<LibraryDetailPage category="novels" />} />
+            <Route path="/images" element={<CategoryPage key="images" category="images" />} />
+            <Route path="/images/:itemId" element={<ContentGate category="images"><ComicReaderPage category="images" /></ContentGate>} />
+            <Route path="/videos" element={<CategoryPage key="videos" category="videos" />} />
+            <Route path="/videos/:itemId" element={<ContentGate category="videos"><LibraryDetailPage category="videos" /></ContentGate>} />
+            <Route path="/games" element={<CategoryPage key="games" category="games" />} />
+            <Route path="/games/:itemId" element={<ContentGate category="games"><LibraryDetailPage category="games" /></ContentGate>} />
+            <Route path="/comics" element={<CategoryPage key="comics" category="comics" />} />
+            <Route path="/comics/:itemId" element={<ContentGate category="comics"><ComicReaderPage /></ContentGate>} />
+            <Route path="/screenshots" element={<CategoryPage key="screenshots" category="screenshots" />} />
+            <Route path="/screenshots/:itemId" element={<ContentGate category="screenshots"><LibraryDetailPage category="screenshots" /></ContentGate>} />
+            <Route path="/music" element={<CategoryPage key="music" category="music" />} />
+            <Route path="/music/:itemId" element={<ContentGate category="music"><LibraryDetailPage category="music" /></ContentGate>} />
+            <Route path="/live2d" element={<CategoryPage key="live2d" category="live2d" />} />
+            <Route path="/live2d/:itemId" element={<ContentGate category="live2d"><LibraryDetailPage category="live2d" /></ContentGate>} />
+            <Route path="/novels" element={<CategoryPage key="novels" category="novels" />} />
+            <Route path="/novels/:itemId" element={<ContentGate category="novels"><LibraryDetailPage category="novels" /></ContentGate>} />
             <Route path="/favorites" element={<FavoritesPage />} />
             <Route path="/board" element={<BoardPage />} />
             <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/reports/:reportId" element={<ReportEditorPage />} />
+            <Route path="/reports/:reportId" element={<ContentGate category="reports"><ReportEditorPage /></ContentGate>} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
