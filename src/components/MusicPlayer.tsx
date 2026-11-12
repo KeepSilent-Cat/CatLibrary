@@ -306,7 +306,7 @@ export default function MusicPlayer({
   const progress = duration > 0 ? currentTime / duration : 0;
 
   return (
-    <div className={`flex h-full ${compact?"":"min-h-[420px]"} flex-col overflow-hidden rounded-[30px] bg-[radial-gradient(circle_at_top_left,rgba(120,160,220,0.18),rgba(20,28,44,0.14)_26%,rgba(6,10,20,0.88)_72%)]`}>
+    <div className={`flex h-full flex-col overflow-hidden ${compact?"":"min-h-[420px] rounded-[30px] bg-[radial-gradient(circle_at_top_left,rgba(120,160,220,0.18),rgba(20,28,44,0.14)_26%,rgba(6,10,20,0.88)_72%)]"}`}>
       <audio
         ref={audioRef}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
@@ -314,7 +314,7 @@ export default function MusicPlayer({
         onEnded={playNext}
       />
 
-      {compact?<div className="p-3"><p className="truncate text-sm">{currentSong?.title??title}</p><div className="mt-3 flex gap-4"><button onClick={playPrev}>上一首</button><button onClick={togglePlay}>{playing?'暂停':'播放'}</button><button onClick={playNext}>下一首</button></div><input aria-label="音乐播放进度" type="range" min="0" max="1" step="0.001" value={progress} onChange={e=>seek(Number(e.target.value))} className="mt-3 w-full"/></div>:<>
+      {compact?<div className="px-5 pb-4 pt-4"><div className="flex items-center gap-3"><div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/12 bg-white/8">{coverImage?<img src={coverImage} alt="" className="h-full w-full object-cover"/>:<Disc3 size={24} className="text-sky-100/70"/>}</div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-white/90">{currentSong?.title??title}</p><p className="mt-1 truncate text-[11px] text-white/45">{title}</p></div><div className="flex shrink-0 items-center gap-1"><button aria-label="上一首" onClick={playPrev} className="rounded-full p-2 text-white/55 hover:text-white"><SkipBack size={15}/></button><button aria-label={playing?'暂停':'播放'} onClick={togglePlay} className="grid h-9 w-9 place-items-center rounded-full border border-sky-100/25 bg-sky-200/15 text-sky-50 hover:bg-sky-200/25">{playing?<Pause size={16}/>:<Play size={16}/>}</button><button aria-label="下一首" onClick={playNext} className="rounded-full p-2 text-white/55 hover:text-white"><SkipForward size={15}/></button></div></div><div className="mt-4 flex items-center gap-3 text-[10px] tabular-nums text-white/40"><span>{formatTime(currentTime)}</span><input aria-label="音乐播放进度" type="range" min="0" max="1" step="0.001" value={progress} onChange={e=>seek(Number(e.target.value))} className="h-1 min-w-0 flex-1 accent-sky-200"/><span>{formatTime(duration)}</span></div></div>:<>
       <div className="grid min-h-0 flex-1 gap-10 p-8 xl:grid-cols-[320px_minmax(0,1fr)]">
         <div className="flex min-h-0 flex-col">
           <div className="relative aspect-square overflow-hidden rounded-[30px] bg-white/6 shadow-[0_28px_90px_rgba(0,0,0,0.34)]">

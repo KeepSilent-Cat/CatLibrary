@@ -831,7 +831,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                 <NovelReader itemId={currentItem.id} />
               </div>
             ) : isMusic ? (
-              <MusicSession rating={currentItem.rating}
+              <MusicSession albumId={currentItem.id} rating={currentItem.rating}
                 tracks={musicTracks}
                 coverImage={currentItem.coverImage}
                 title={currentItem.altName ?? currentItem.title}

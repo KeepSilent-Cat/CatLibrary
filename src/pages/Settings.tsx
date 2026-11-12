@@ -1,4 +1,5 @@
-import {open as selectBackup} from "@tauri-apps/plugin-dialog";
+import ContentUnlockDialog from "@/components/ContentUnlockDialog";
+import LibraryBackupCard from "@/components/LibraryBackupCard";
 import { Camera, Eye, EyeOff, FolderTree, ImagePlus, Keyboard, ShieldAlert, ToggleLeft, ToggleRight, Wallpaper } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -38,11 +39,11 @@ const videoPreviewBehaviorOptions: Array<{
 ];
 
 export default function Settings() {
-  const [backupNote,setBackupNote]=useState("");
-  const [backingUp,setBackingUp]=useState(false);
+
+
   const [unlockTarget,setUnlockTarget]=useState<0|1|2|null>(null);
-  const [password,setPassword]=useState("");
-  const [unlockError,setUnlockError]=useState("");
+
+
   const {
     resourceRoot,
     relativeModeEnabled,
@@ -141,8 +142,8 @@ export default function Settings() {
 
   return (
     <div className="h-full min-h-0 overflow-y-auto p-5">
-{unlockTarget!==null&&<div role="dialog" aria-label="解锁内容显示范围" className="fixed inset-0 z-50 grid place-items-center bg-black/60"><form className="rounded-3xl bg-slate-900 p-6" onSubmit={async e=>{e.preventDefault();try{if(await invoke<boolean>("verify_content_password",{password})){setRatingFilter(unlockTarget);setUnlockTarget(null);}else setUnlockError("密码不正确");}catch{setUnlockError("无法验证，请在桌面程序中重试");}}}><h2>解锁内容显示范围</h2><input autoFocus type="password" value={password} onChange={e=>setPassword(e.target.value)} aria-label="内容密码" className="my-4 rounded bg-black/30 p-3"/><p role="status">{unlockError}</p><button type="submit">解锁</button><button type="button" className="ml-6" onClick={()=>setUnlockTarget(null)}>取消</button></form></div>}
-      <section className="mb-5 rounded-3xl border border-white/20 p-5"><h2>准备移动硬盘备份</h2><p>保存当前设置、收藏、画板及元数据快照，不复制素材；完成后按说明退出并复制整个文件夹。</p><button disabled={backingUp} onClick={async()=>{setBackingUp(true);try{const settings=Object.fromEntries(Object.keys(localStorage).map(key=>[key,localStorage.getItem(key)]));setBackupNote(await invoke<string>("prepare_portable_backup",{resourceRoot,settingsJson:JSON.stringify(settings)}));}catch(e){setBackupNote("备份准备失败："+String(e));}finally{setBackingUp(false);}}}>{backingUp?"正在保存…":"保存备份检查点"}</button><button className="ml-6" disabled={backingUp} onClick={async()=>{try{const path=await selectBackup({multiple:false,filters:[{name:'设置快照',extensions:['json']}]});if(typeof path!=='string')return;const text=await invoke<string>('read_backup_settings',{path});const snapshot=JSON.parse(text) as Record<string,string|null>;if(!window.confirm('恢复收藏、画板及设置后将重启界面。不会覆盖或移动素材文件，是否继续？'))return;const previous=Object.fromEntries(Object.keys(localStorage).map(key=>[key,localStorage.getItem(key)]));try{localStorage.clear();for(const [key,value]of Object.entries(snapshot))if(typeof value==='string')localStorage.setItem(key,value);}catch(e){localStorage.clear();for(const [key,value]of Object.entries(previous))if(value!==null)localStorage.setItem(key,value);throw e;}location.reload();}catch(e){setBackupNote('恢复失败：'+String(e));}}}>恢复设置快照</button><pre className="mt-3 whitespace-pre-wrap text-sm" role="status">{backupNote}</pre></section><div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <ContentUnlockDialog target={unlockTarget} onClose={()=>setUnlockTarget(null)} onUnlock={setRatingFilter}/>
+      <div className="grid items-start gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="glass-panel rounded-[32px] p-6">
           <h2 className="text-xl font-semibold text-white">基础设置</h2>
           <p className="mt-2 text-sm leading-6 text-white/68">
@@ -191,7 +192,7 @@ export default function Settings() {
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => {if(option.value===0)setRatingFilter(0);else {setPassword("");setUnlockError("");setUnlockTarget(option.value);}}}
+                    onClick={() => {if(option.value===0)setRatingFilter(0);else setUnlockTarget(option.value);}}
                     className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition ${
                       ratingFilter === option.value
                         ? "border-rose-300/35 bg-rose-300/12 text-rose-100"
@@ -354,6 +355,7 @@ export default function Settings() {
           </div>
         </section>
 
+        <aside className="space-y-6">
         <section className="glass-panel rounded-[32px] p-6">
           <h2 className="text-xl font-semibold text-white">路径策略</h2>
           <p className="mt-2 text-sm leading-6 text-white/68">
@@ -416,6 +418,8 @@ export default function Settings() {
             </ul>
           </div>
         </section>
+        <LibraryBackupCard/>
+        </aside>
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import {loadReports,type Report} from "@/lib/reports";
 import RandomShowcase from "@/components/RandomShowcase";
 import {
   ArrowRight,
@@ -6,6 +7,8 @@ import {
   Camera,
   Gamepad2,
   ImageIcon,
+  LayoutGrid,
+  Newspaper,
   Music,
   PlaySquare,
   Sparkles,
@@ -54,6 +57,9 @@ export default function Home() {
   const navigate = useNavigate();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
   const ratingFilter = useAppStore((state) => state.ratingFilter);
+  const boards=useAppStore(state=>state.boards);
+  const extraRatings=useAppStore(state=>state.extraRatings);
+  const [reports,setReports]=useState<Report[]>([]);
   const [index, setIndex] = useState<LibraryIndex>(emptyIndex);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,15 +86,19 @@ export default function Home() {
     };
   }, [resourceRoot, refreshKey]);
 
+  useEffect(()=>{let current=true;loadReports(resourceRoot).then(items=>{if(current)setReports(items);}).catch(()=>{if(current)setReports([]);});return()=>{current=false;};},[resourceRoot,refreshKey]);
+
   // 分级过滤后的馆藏：计数、最近入馆、藏室卡片都只看得到的内容
   const visibleIndex = useMemo(
     () => filterLibraryIndex(index, ratingFilter),
     [index, ratingFilter],
   );
 
+  const boardCount=boards.filter(board=>(extraRatings["board/"+board.id]??2)<=ratingFilter).length;
+  const reportCount=reports.filter(report=>(extraRatings["reports/"+report.id]??2)<=ratingFilter).length;
   const totalCount = useMemo(
-    () => categoryMeta.reduce((sum, meta) => sum + visibleIndex[meta.key].length, 0),
-    [visibleIndex],
+    () => categoryMeta.reduce((sum, meta) => sum + visibleIndex[meta.key].length, 0)+boardCount+reportCount,
+    [visibleIndex,boardCount,reportCount],
   );
 
   const recentItems = useMemo(() => {
@@ -101,6 +111,7 @@ export default function Home() {
     return all.sort((left, right) => right.item.modifiedAt - left.item.modifiedAt).slice(0, 10);
   }, [visibleIndex]);
 
+  const rooms=[...categoryMeta.map(meta=>({...meta,route:"/"+meta.key,Icon:categoryIcons[meta.key],count:visibleIndex[meta.key].length,unit:"件"})),{key:"board",title:"画板",description:"把参考、灵感与片段，摆进自己的创作桌面。",route:"/board",Icon:LayoutGrid,count:boardCount,unit:"块"},{key:"reports",title:"报道",description:"以文字与媒体编排，整理值得留下的故事。",route:"/reports",Icon:Newspaper,count:reportCount,unit:"篇"}];
   const showcaseItems=Object.values(visibleIndex).flat();
   return (
     <section className="glass-panel relative h-full min-h-0 overflow-y-auto rounded-[32px]">
@@ -133,7 +144,7 @@ export default function Home() {
                 {loading ? "—" : totalCount}
               </p>
               <p className="mt-2 text-xs text-white/52">
-                {categoryMeta.length} 类馆藏 · {totalCount} 件藏品
+                {rooms.length} 间藏室 · {totalCount} 件藏品
               </p>
             </div>
           </div>
@@ -143,14 +154,14 @@ export default function Home() {
         <div className="mt-7">
           <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-white/48">藏室</h2>
           <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
-            {categoryMeta.map((meta) => {
-              const Icon = categoryIcons[meta.key];
-              const count = visibleIndex[meta.key].length;
+            {rooms.map((meta) => {
+              const Icon = meta.Icon;
+              const count = meta.count;
               return (
                 <button
                   key={meta.key}
                   type="button"
-                  onClick={() => navigate(`/${meta.key}`)}
+                  onClick={() => navigate(meta.route)}
                   className="group relative overflow-hidden rounded-[24px] border border-white/14 bg-white/6 p-5 text-left transition duration-200 hover:-translate-y-1 hover:border-sky-300/40 hover:bg-white/10 hover:shadow-[0_18px_44px_rgba(24,16,52,0.28)]"
                 >
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/16 bg-white/8 text-sky-100 transition group-hover:bg-sky-300/18">
@@ -159,7 +170,7 @@ export default function Home() {
                   <h3 className="mt-4 text-base font-semibold text-white">{meta.title}</h3>
                   <p className="mt-1 text-xs leading-5 text-white/55">{meta.description}</p>
                   <div className="mt-4 flex items-center justify-between">
-                    <span className="text-xs tabular-nums text-white/70">{count} 件</span>
+                    <span className="text-xs tabular-nums text-white/70">{count} {meta.unit}</span>
                     <ArrowRight className="h-4 w-4 text-white/40 transition group-hover:translate-x-0.5 group-hover:text-sky-200" />
                   </div>
                 </button>
@@ -168,7 +179,6 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mt-5 flex gap-4">{[["/favorites","收藏"],["/board","画板"],["/reports","报道 / 频道"]].map(([to,label])=><button key={to} className="rounded-2xl border border-white/20 p-5" onClick={()=>navigate(to)}>{label}</button>)}</div>
         <RandomShowcase items={showcaseItems}/>
         {/* 最近入馆：跨分类最近修改的条目 */}
         {recentItems.length > 0 ? (

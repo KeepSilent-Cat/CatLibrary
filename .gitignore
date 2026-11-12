@@ -33,3 +33,11 @@ src-tauri/.tauri-runtime
 /tmp/render-check/
 /tmp/
 /output/
+
+# Personal libraries and backup exports never belong in this public repository
+/library/
+/data/
+/backups/
+/downloads/
+*.exe
+*.msi

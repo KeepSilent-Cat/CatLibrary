@@ -1,6 +1,6 @@
 [package]
 name = "cat_library"
-version = "0.2.0"
+version = "0.2.1"
 description = "ZeroCat local media index desktop shell"
 authors = ["ZeroCat"]
 license = ""

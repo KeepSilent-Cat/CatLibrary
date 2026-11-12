@@ -1,0 +1,8 @@
+.library-preference-dialog{width:min(440px,calc(100vw - 40px));max-height:calc(100vh - 48px);padding:0;overflow:auto;color:white;border:1px solid rgba(255,255,255,.25);border-radius:30px;background:linear-gradient(140deg,rgba(255,255,255,.16),rgba(255,255,255,.035) 65%),rgba(41,36,54,.82);backdrop-filter:blur(28px);box-shadow:0 28px 100px rgba(15,9,35,.4),inset 0 1px rgba(255,255,255,.18)}
+.library-preference-dialog::backdrop{background:rgba(19,14,32,.42);backdrop-filter:blur(8px)}
+.library-primary-button,.library-secondary-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:16px;padding:12px 16px;font-size:13px;line-height:20px;transition:background .2s,border-color .2s;color:rgba(255,255,255,.9)}
+.library-primary-button{background:rgba(186,230,253,.18);border:1px solid rgba(186,230,253,.4);box-shadow:inset 0 1px rgba(255,255,255,.15)}
+.library-primary-button:hover{background:rgba(186,230,253,.28)}
+.library-secondary-button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18)}
+.library-secondary-button:hover{background:rgba(255,255,255,.13)}
+.library-primary-button:disabled,.library-secondary-button:disabled{opacity:.4;cursor:not-allowed}
