@@ -6,12 +6,12 @@
 
 本地素材管理 · 沉浸式浏览 · Windows 桌面应用
 
-[![版本](https://img.shields.io/badge/version-0.2.1-8eb5ae?style=flat-square)](docs/2026-11-13-ui-refinement.md)
+[![版本](https://img.shields.io/badge/version-0.2.2-8eb5ae?style=flat-square)](docs/2026-11-13-random-music.md)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-243847?style=flat-square)
 ![React 18](https://img.shields.io/badge/React-18-243847?style=flat-square)
 ![Windows](https://img.shields.io/badge/platform-Windows-243847?style=flat-square)
 
-[**查看介绍与下载安装 →**](https://www.echolnk.top/?page=cases&project=catlibrary) · [更新说明](docs/2026-11-13-ui-refinement.md) · [备份与迁移](docs/备份与迁移.md)
+[**查看介绍与下载安装 →**](https://www.echolnk.top/?page=cases&project=catlibrary) · [更新说明](docs/2026-11-13-random-music.md) · [备份与迁移](docs/备份与迁移.md)
 
 </div>
 

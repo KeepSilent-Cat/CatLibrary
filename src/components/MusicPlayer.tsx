@@ -26,6 +26,7 @@ export const AUDIO_FILE_RE = /\.(mp3|flac|wav|m4a|aac|ogg|opus|wma)$/i;
 
 export interface MusicPlayerProps {
   compact?: boolean;
+  autoPlay?: boolean;
   tracks: MusicTrack[];
   coverImage?: string;
   title: string;
@@ -84,6 +85,7 @@ function pickPreferredVariant(variants: MusicTrack[]): MusicTrack {
 
 export default function MusicPlayer({
   compact = false,
+  autoPlay = false,
   tracks,
   coverImage,
   title,
@@ -95,7 +97,7 @@ export default function MusicPlayer({
   useEffect(()=>{const audio=audioRef.current;return()=>audio?.pause();},[]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [songIndex, setSongIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState(autoPlay);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
