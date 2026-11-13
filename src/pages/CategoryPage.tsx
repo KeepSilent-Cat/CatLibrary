@@ -8,6 +8,8 @@ import {
   Eye,
   EyeOff,
   FolderPlus,
+  ListChecks,
+  Loader2,
   Maximize2,
   Minimize2,
   MousePointer2,
@@ -26,6 +28,7 @@ import ComicSearchBox from "@/components/ComicSearchBox";
 import EditableNumber from "@/components/EditableNumber";
 import LibraryCard from "@/components/LibraryCard";
 import TagFilterControl from "@/components/TagFilterControl";
+import ImageCoverPicker from "@/components/ImageCoverPicker";
 import {
   categoryMeta,
   type CategoryKey,
@@ -33,7 +36,7 @@ import {
   type SortMode,
   type VideoSoundMode,
 } from "@/data/library";
-import { loadLibraryIndex, clearLibraryIndexCache } from "@/lib/library-source";
+import { loadLibraryIndex, clearLibraryIndexCache, filterLibraryIndex } from "@/lib/library-source";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/useAppStore";
 
@@ -519,6 +522,16 @@ export default function CategoryPage({
   const toggleTagFilter = useAppStore((state) => state.toggleTagFilter);
   const clearTagFilter = useAppStore((state) => state.clearTagFilter);
 
+  // 批量整理
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelection, setBatchSelection] = useState<string[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchTagInput, setBatchTagInput] = useState("");
+  const [batchConfirmDelete, setBatchConfirmDelete] = useState(false);
+  const [batchCoverOpen, setBatchCoverOpen] = useState(false);
+  const [batchCoverLoading, setBatchCoverLoading] = useState(false);
+  const [batchCoverItems, setBatchCoverItems] = useState<LibraryItem[]>([]);
+
   // 标签筛选条的候选标签：与内容共用同一套分级隐藏规则——
   // 被当前显示范围排除的素材，其独有的标签也不参与筛选（全年龄模式下不会冒出 18+ 专属标签）
   const allTags = useMemo(() => {
@@ -553,6 +566,150 @@ export default function CategoryPage({
 
     return sortedItems.filter((item) => favoriteIds.includes(`${category}/${item.id}`));
   }, [sortedItems, favoritesOnly, category, favoriteIds]);
+
+  /* ---------- 批量整理 ---------- */
+  const exitBatchMode = () => {
+    setBatchMode(false);
+    setBatchSelection([]);
+    setBatchTagInput("");
+    setBatchConfirmDelete(false);
+  };
+
+  const toggleBatchItem = (id: string) => {
+    setBatchSelection((previous) =>
+      previous.includes(id) ? previous.filter((existing) => existing !== id) : [...previous, id],
+    );
+  };
+
+  const refreshAfterBatch = () => {
+    clearLibraryIndexCache(resourceRoot);
+    setRefreshKey((key) => key + 1);
+  };
+
+  const applyBatchRating = async (rating: number) => {
+    if (batchSelection.length === 0 || batchBusy) {
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      await invoke("bulk_update_metadata", {
+        resourceRoot,
+        patches: batchSelection.map((id) => ({ category, itemId: id, rating, addTags: [] })),
+      });
+      refreshAfterBatch();
+      setSavedToast(
+        `已把 ${batchSelection.length} 个条目设为${rating === 0 ? "全年龄" : rating === 1 ? "R15" : "18+"}`,
+      );
+      setBatchSelection([]);
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "批量修改分级失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const applyBatchTag = async () => {
+    const tag = batchTagInput.trim();
+    if (!tag || batchSelection.length === 0 || batchBusy) {
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      await invoke("bulk_update_metadata", {
+        resourceRoot,
+        patches: batchSelection.map((id) => ({ category, itemId: id, addTags: [tag] })),
+      });
+      refreshAfterBatch();
+      setSavedToast(`已给 ${batchSelection.length} 个条目加上标签「${tag}」`);
+      setBatchTagInput("");
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "批量加标签失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const openBatchCoverPicker = async () => {
+    if (batchSelection.length === 0 || batchBusy) {
+      return;
+    }
+    setBatchCoverLoading(true);
+    try {
+      const index = await loadLibraryIndex(resourceRoot);
+      setBatchCoverItems(filterLibraryIndex(index, ratingFilter).images);
+      setBatchCoverOpen(true);
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "读取图片库失败");
+    } finally {
+      setBatchCoverLoading(false);
+    }
+  };
+
+  const applyBatchCover = async (imageUrl: string) => {
+    if (batchSelection.length === 0) {
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error("读取图片失败");
+      }
+      const blob = await response.blob();
+      const buffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let index = 0; index < bytes.length; index += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+      }
+      const data = btoa(binary);
+      const name = decodeURIComponent(imageUrl.split("/").pop() ?? "cover.jpg").split("?")[0];
+
+      for (const id of batchSelection) {
+        await invoke("set_item_cover", {
+          resourceRoot,
+          category,
+          itemId: id,
+          image: { name, data },
+        });
+      }
+      refreshAfterBatch();
+      setSavedToast(`已为 ${batchSelection.length} 个条目设置封面`);
+      setBatchCoverOpen(false);
+      setBatchSelection([]);
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "批量设置封面失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (batchSelection.length === 0 || batchBusy) {
+      return;
+    }
+    if (!batchConfirmDelete) {
+      setBatchConfirmDelete(true);
+      window.setTimeout(() => setBatchConfirmDelete(false), 4000);
+      return;
+    }
+
+    setBatchBusy(true);
+    try {
+      for (const id of batchSelection) {
+        await invoke("delete_library_item", { resourceRoot, category, itemId: id });
+      }
+      refreshAfterBatch();
+      setSavedToast(`已删除 ${batchSelection.length} 个条目`);
+      setBatchSelection([]);
+      setBatchConfirmDelete(false);
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "批量删除失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
 
   // 视频卡片：默认自适应（像图片/漫画一样均分排列），切到自定义才用固定宽高
   const useCustomVideoLayout = isVideoCategory && !videoAutoLayout;
@@ -693,6 +850,19 @@ export default function CategoryPage({
                 {creatingLive2d ? "创建中…" : "新建角色"}
               </button>
             ) : null}
+            <button
+              type="button"
+              onClick={() => (batchMode ? exitBatchMode() : setBatchMode(true))}
+              title="批量整理：多选后统一改分级 / 加标签 / 设封面 / 删除"
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition ${
+                batchMode
+                  ? "border-emerald-300/55 bg-emerald-300/20 text-emerald-50"
+                  : "border-white/16 bg-white/8 text-white/76 hover:bg-white/16"
+              }`}
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+              {batchMode ? "退出批量" : "批量"}
+            </button>
             <TagFilterControl tags={allTags} />
             <select
               value={sortMode}
@@ -742,6 +912,90 @@ export default function CategoryPage({
               清除筛选（{tagFilter.length}）
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* 批量整理操作条 */}
+      {batchMode ? (
+        <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5 rounded-[14px] border border-emerald-300/25 bg-emerald-300/8 px-3 py-2">
+          <span className="text-xs font-medium text-emerald-100">已选 {batchSelection.length} 个</span>
+          <button
+            type="button"
+            onClick={() => setBatchSelection(visibleItems.map((item) => item.id))}
+            className="rounded-full border border-white/16 bg-white/8 px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/16"
+          >
+            全选本页
+          </button>
+          <button
+            type="button"
+            onClick={() => setBatchSelection([])}
+            className="rounded-full border border-white/16 bg-white/8 px-2.5 py-1 text-[11px] text-white/60 transition hover:bg-white/16"
+          >
+            清空
+          </button>
+
+          <span className="mx-1 h-4 w-px bg-white/15" />
+          <span className="text-[11px] text-white/45">分级</span>
+          {(
+            [
+              [0, "全年龄"],
+              [1, "R15"],
+              [2, "18+"],
+            ] as Array<[number, string]>
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              disabled={batchBusy || batchSelection.length === 0}
+              onClick={() => void applyBatchRating(value)}
+              className="rounded-full border border-white/16 bg-white/8 px-2.5 py-1 text-[11px] text-white/75 transition hover:bg-white/16 disabled:opacity-35"
+            >
+              {label}
+            </button>
+          ))}
+
+          <span className="mx-1 h-4 w-px bg-white/15" />
+          <input
+            value={batchTagInput}
+            onChange={(event) => setBatchTagInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void applyBatchTag();
+              }
+            }}
+            placeholder="标签名"
+            className="w-28 rounded-full border border-white/16 bg-black/25 px-3 py-1 text-[11px] text-white outline-none placeholder:text-white/25 focus:border-sky-300/50"
+          />
+          <button
+            type="button"
+            disabled={batchBusy || !batchTagInput.trim() || batchSelection.length === 0}
+            onClick={() => void applyBatchTag()}
+            className="rounded-full border border-white/16 bg-white/8 px-2.5 py-1 text-[11px] text-white/75 transition hover:bg-white/16 disabled:opacity-35"
+          >
+            加标签
+          </button>
+          <button
+            type="button"
+            disabled={batchBusy || batchSelection.length === 0}
+            onClick={() => void openBatchCoverPicker()}
+            className="rounded-full border border-white/16 bg-white/8 px-2.5 py-1 text-[11px] text-white/75 transition hover:bg-white/16 disabled:opacity-35"
+          >
+            设封面
+          </button>
+          <button
+            type="button"
+            disabled={batchBusy || batchSelection.length === 0}
+            onClick={() => void deleteSelected()}
+            className={`rounded-full border px-2.5 py-1 text-[11px] transition disabled:opacity-35 ${
+              batchConfirmDelete
+                ? "border-rose-300/70 bg-rose-400/30 text-rose-50"
+                : "border-rose-300/30 bg-white/8 text-rose-200 hover:bg-rose-300/20"
+            }`}
+          >
+            {batchConfirmDelete ? "再点一次确认删除" : "删除"}
+          </button>
+          {batchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-200" /> : null}
         </div>
       ) : null}
 
@@ -866,6 +1120,14 @@ export default function CategoryPage({
         />
       )}
 
+      <ImageCoverPicker
+        open={batchCoverOpen}
+        loading={batchCoverLoading}
+        items={batchCoverItems}
+        onClose={() => setBatchCoverOpen(false)}
+        onPick={(imageUrl) => void applyBatchCover(imageUrl)}
+      />
+
       {loading ? (
         <div className="flex flex-1 items-center justify-center text-sm text-white/62">正在读取真实素材目录...</div>
       ) : error ? (
@@ -901,6 +1163,8 @@ export default function CategoryPage({
                 showInfo={isVideoCategory ? videoShowInfo : true}
                 favorite={favoriteIds.includes(`${category}/${item.id}`)}
                 selected={selectedModeActive && selectedVideoIds.includes(item.id)}
+                batchSelected={batchMode && batchSelection.includes(item.id)}
+                onToggleBatch={batchMode ? () => toggleBatchItem(item.id) : undefined}
                 onToggleFavorite={() => toggleFavorite(category, item.id)}
                 onSelect={
                   selectedModeActive

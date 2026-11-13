@@ -1549,6 +1549,74 @@ fn decode_text_bytes(bytes: &[u8]) -> String {
   }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BulkMetadataPatch {
+  category: String,
+  item_id: String,
+  rating: Option<u8>,
+  #[serde(default)]
+  add_tags: Vec<String>,
+}
+
+/// 批量整理：一次性写入多条的分级与标签（只加载/写盘一次，比逐条调用快得多）。
+#[tauri::command]
+fn bulk_update_metadata(
+  app: AppHandle,
+  resource_root: String,
+  patches: Vec<BulkMetadataPatch>,
+) -> Result<usize, String> {
+  let root = PathBuf::from(&resource_root);
+  let mut metadata = load_library_metadata(&app, &root)?;
+  let mut changed = 0usize;
+
+  for patch in patches {
+    let key = format!("{}/{}", patch.category, patch.item_id);
+    let entry = metadata.entry(key).or_default();
+
+    if let Some(rating) = patch.rating {
+      entry.rating = Some(rating.min(2));
+      entry.adult = Some(rating >= 2);
+    }
+
+    if !patch.add_tags.is_empty() {
+      let mut tags = entry.tags.clone().unwrap_or_default();
+      for tag in patch.add_tags {
+        let trimmed = tag.trim().to_string();
+        if !trimmed.is_empty() && !tags.iter().any(|existing| existing == &trimmed) {
+          tags.push(trimmed);
+        }
+      }
+      entry.tags = if tags.is_empty() { None } else { Some(tags) };
+    }
+
+    changed += 1;
+  }
+
+  write_library_metadata(&app, &root, &metadata)?;
+  Ok(changed)
+}
+
+/// 给任意分类的条目设置封面（把图片写进该条目的 cover/ 目录）。
+#[tauri::command]
+fn set_item_cover(
+  resource_root: String,
+  category: String,
+  item_id: String,
+  image: CoverImageInput,
+) -> Result<String, String> {
+  let root = PathBuf::from(&resource_root);
+  let cover_dir = root.join(&category).join(&item_id).join("cover");
+  fs::create_dir_all(&cover_dir).map_err(|error| error.to_string())?;
+  clear_cover_dir_images(&cover_dir)?;
+
+  let bytes = decode_base64(&image.data)?;
+  let file_name = format!("cover_{}_{}", now_timestamp(), sanitize_file_name(&image.name));
+  let cover_path = cover_dir.join(file_name);
+  fs::write(&cover_path, bytes).map_err(|error| error.to_string())?;
+  Ok(path_to_string(cover_path))
+}
+
 /// 启动可执行文件（工作目录设为其所在目录，很多游戏依赖此），返回子进程句柄
 fn launch_executable_spawn(path: &Path) -> Result<std::process::Child, String> {
   let working_dir = path.parent().unwrap_or_else(|| Path::new("."));
@@ -3650,6 +3718,8 @@ pub fn run() {
       remove_live2d_model,
       save_live2d_cover,
       add_wallpaper_to_images,
+      bulk_update_metadata,
+      set_item_cover,
       list_reports,
       save_report,
       delete_report,

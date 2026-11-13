@@ -24,6 +24,8 @@ export default function LibraryCard({
   showInfo = true,
   favorite = false,
   selected = false,
+  batchSelected = false,
+  onToggleBatch,
   onToggleFavorite,
   onSelect,
   onClick,
@@ -39,6 +41,9 @@ export default function LibraryCard({
   showInfo?: boolean;
   favorite?: boolean;
   selected?: boolean;
+  /** 批量整理模式：卡片显示勾选框，点击切换选中而不是打开详情 */
+  batchSelected?: boolean;
+  onToggleBatch?: () => void;
   onToggleFavorite?: () => void;
   onSelect?: (item: LibraryItem) => void;
   onClick: (item: LibraryItem) => void;
@@ -211,6 +216,11 @@ export default function LibraryCard({
       role="button"
       tabIndex={0}
       onClick={() => {
+        // 批量整理：点击只切换选中，不打开详情
+        if (onToggleBatch) {
+          onToggleBatch();
+          return;
+        }
         // 选中出声模式：单击只选中（出声），双击打开详情
         if (onSelect) {
           onSelect(item);
@@ -218,11 +228,19 @@ export default function LibraryCard({
           onClick(item);
         }
       }}
-      onDoubleClick={() => onClick(item)}
+      onDoubleClick={() => {
+        if (!onToggleBatch) {
+          onClick(item);
+        }
+      }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onClick(item);
+          if (onToggleBatch) {
+            onToggleBatch();
+          } else {
+            onClick(item);
+          }
         }
       }}
       onMouseEnter={() => setIsHovering(true)}
@@ -238,8 +256,23 @@ export default function LibraryCard({
         // 选中出声模式下被选中的卡片高亮
         selected &&
           "border-sky-300/80 shadow-[0_0_0_2px_rgba(125,211,252,0.55),0_20px_48px_rgba(24,16,52,0.24)]",
+        // 批量整理：选中的卡片描边
+        batchSelected &&
+          "border-emerald-300/80 shadow-[0_0_0_2px_rgba(110,231,183,0.5),0_20px_48px_rgba(16,10,34,0.24)]",
       )}
     >
+      {onToggleBatch ? (
+        <span
+          className={cn(
+            "pointer-events-none absolute left-2.5 top-2.5 z-20 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold transition",
+            batchSelected
+              ? "border-emerald-300 bg-emerald-400 text-emerald-950"
+              : "border-white/45 bg-black/55 text-white/60",
+          )}
+        >
+          {batchSelected ? "✓" : ""}
+        </span>
+      ) : null}
       {item.coverType === "video" && item.previewMedia ? (
         <video
           ref={videoRef}
