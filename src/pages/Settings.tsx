@@ -100,6 +100,7 @@ export default function Settings() {
       await invoke("add_wallpaper_to_images", {
         resourceRoot,
         pngData: Array.from(new Uint8Array(buffer)),
+        rating: ratingFilter,
       });
       clearLibraryIndexCache(resourceRoot);
       setSavedToast("背景已备份到图片分类");
@@ -218,8 +219,9 @@ export default function Settings() {
                 ))}
               </div>
               <p className="mt-3 text-xs leading-6 text-white/52">
-                可在详情或编辑中设置分级：全年龄、擦边 R15、
-                成人 18+。新加入的内容默认标为 18+；确认适合公开展示后，可手动改为全年龄。
+                可在详情或编辑中设置分级：全年龄、擦边 R15、成人 18+。
+                新加入的内容会按当前选择的显示范围打标签：选「全年龄」就标全年龄，
+                选「含 R15」就标 R15，选「全部」就标 18+。加完可随时手动改。
               </p>
             </div>
 

@@ -600,7 +600,7 @@ export default function CategoryPage({
   const handleCreateGameFolder = async () => {
     setCreatingGame(true);
     try {
-      const groupId = await invoke<string>("create_game_group", { resourceRoot });
+      const groupId = await invoke<string>("create_game_group", { resourceRoot, rating: ratingFilter });
       clearLibraryIndexCache(resourceRoot);
       setRefreshKey((key) => key + 1);
       setSavedToast(`已创建并打开 ${groupId}`);
@@ -615,7 +615,7 @@ export default function CategoryPage({
   const handleCreateLive2dGroup = async () => {
     setCreatingLive2d(true);
     try {
-      const groupId = await invoke<string>("create_live2d_group", { resourceRoot });
+      const groupId = await invoke<string>("create_live2d_group", { resourceRoot, rating: ratingFilter });
       clearLibraryIndexCache(resourceRoot);
       setRefreshKey((key) => key + 1);
       setSavedToast(`已创建角色 ${groupId}，点进去添加 PSD 和模型`);

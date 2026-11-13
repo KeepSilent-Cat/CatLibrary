@@ -424,6 +424,7 @@ fn add_library_items(
   category: String,
   drop_paths: Vec<String>,
   display_name: Option<String>,
+  rating: Option<u8>,
 ) -> Result<Vec<String>, String> {
   let root = PathBuf::from(&resource_root);
   let category_dir = root.join(&category);
@@ -460,16 +461,17 @@ fn add_library_items(
     .unwrap_or_default()
     .to_string();
 
-  // 展示名写入 metadata，与文件夹名解耦
-  if let Some(display_name) = display_name {
+  // 展示名与默认分级写入 metadata，与文件夹名解耦。
+  // 分级由前端按「当前显示范围」传入：全年龄模式→0，R15 模式→1，18+ 模式→2。
+  if display_name.is_some() || rating.is_some() {
     let mut metadata = load_library_metadata(&app, &root)?;
     metadata.insert(
       format!("{category}/{group_id}"),
       LibraryMetadataEntry {
-        title: Some(display_name),
+        title: display_name,
         summary: None,
-        adult: None,
-        rating: Some(2),
+        adult: rating.map(|value| value >= 2),
+        rating,
         tags: None,
         alt_name: None,
         launch_path: None,
@@ -494,6 +496,7 @@ fn add_comic_chapter(
   chapter_number: u32,
   target_group_id: Option<String>,
   display_name: Option<String>,
+  rating: Option<u8>,
 ) -> Result<Vec<String>, String> {
   let root = PathBuf::from(&resource_root);
   let comics_dir = root.join("comics");
@@ -546,19 +549,22 @@ fn add_comic_chapter(
 
   // 新建漫画时写入展示名；加入已有漫画不改标题
   if target_group_id.is_none() {
-    if let Some(display_name) = display_name
+    let trimmed_name = display_name
       .as_deref()
       .map(str::trim)
       .filter(|name| !name.is_empty())
-    {
+      .map(str::to_string);
+
+    // 新建漫画时写入标题与默认分级（分级跟随前端的当前显示范围）
+    if trimmed_name.is_some() || rating.is_some() {
       let mut metadata = load_library_metadata(&app, &root)?;
       metadata.insert(
         format!("comics/{group_id}"),
         LibraryMetadataEntry {
-          title: Some(display_name.to_string()),
+          title: trimmed_name,
           summary: None,
-          adult: None,
-          rating: None,
+          adult: rating.map(|value| value >= 2),
+          rating,
           tags: None,
           alt_name: None,
           launch_path: None,
@@ -974,13 +980,19 @@ fn extract_comic_chapter(
     .filter(|name| !name.is_empty())
     .map(str::to_string)
     .unwrap_or(fallback_title);
+  // 拆出来的新漫画沿用原漫画的分级，避免把 18+ 内容拆成「全年龄」
+  let inherited_rating = metadata
+    .get(&format!("comics/{group_id}"))
+    .map(rating_of)
+    .unwrap_or(0);
+
   metadata.insert(
     format!("comics/{new_group_id}"),
     LibraryMetadataEntry {
       title: Some(title),
       summary: None,
-      adult: None,
-      rating: None,
+      adult: Some(inherited_rating >= 2),
+      rating: Some(inherited_rating),
       tags: None,
       alt_name: None,
       launch_path: None,
@@ -1070,7 +1082,7 @@ fn is_dir_empty(path: &Path) -> bool {
 /// 新建游戏：优先按序号打开已有的空 game_N（source 为空），没有才新建并打开。
 /// 返回 group_id。
 #[tauri::command]
-fn create_game_group(resource_root: String) -> Result<String, String> {
+fn create_game_group(app: AppHandle, resource_root: String, rating: Option<u8>) -> Result<String, String> {
   let root = PathBuf::from(&resource_root);
   let games_dir = root.join("games");
   fs::create_dir_all(&games_dir).map_err(|error| error.to_string())?;
@@ -1126,6 +1138,7 @@ fn create_game_group(resource_root: String) -> Result<String, String> {
     .and_then(|value| value.to_str())
     .unwrap_or_default()
     .to_string();
+  write_initial_rating(&app, &root, &format!("games/{group_id}"), rating)?;
   open_in_explorer(&source_dir)?;
   Ok(group_id)
 }
@@ -2338,6 +2351,25 @@ fn load_classified_metadata(metadata_file:&Path)->Result<HashMap<String,LibraryM
  Ok(metadata)
 }
 
+/// 新建条目时写入默认分级（由前端按当前显示范围传入：0 全年龄 / 1 R15 / 2 18+）。
+/// 已有 metadata 的条目不会被覆盖，只补写分级字段。
+fn write_initial_rating(
+  app: &AppHandle,
+  root: &Path,
+  key: &str,
+  rating: Option<u8>,
+) -> Result<(), String> {
+  let Some(value) = rating else {
+    return Ok(());
+  };
+
+  let mut metadata = load_library_metadata(app, root)?;
+  let entry = metadata.entry(key.to_string()).or_default();
+  entry.rating = Some(value);
+  entry.adult = Some(value >= 2);
+  write_library_metadata(app, root, &metadata)
+}
+
 fn write_library_metadata(
   app: &AppHandle,
   root: &Path,
@@ -3170,7 +3202,7 @@ fn list_live2d_sources(resource_root: String, item_id: String) -> Result<Live2dS
 
 /// 新建 live2d 角色：创建 live2d_N/source/psd 与 source/model 两个空槽。
 #[tauri::command]
-fn create_live2d_group(resource_root: String) -> Result<String, String> {
+fn create_live2d_group(app: AppHandle, resource_root: String, rating: Option<u8>) -> Result<String, String> {
   let root = PathBuf::from(&resource_root);
   let live2d_dir = root.join("live2d");
   fs::create_dir_all(&live2d_dir).map_err(|error| error.to_string())?;
@@ -3182,6 +3214,7 @@ fn create_live2d_group(resource_root: String) -> Result<String, String> {
     .and_then(|value| value.to_str())
     .unwrap_or_default()
     .to_string();
+  write_initial_rating(&app, &root, &format!("live2d/{group_id}"), rating)?;
   Ok(group_id)
 }
 
@@ -3278,7 +3311,7 @@ fn save_live2d_cover(
 
 /// 把背景图 PNG 字节保存为图片分类的一个新分组（备份应用背景）。
 #[tauri::command]
-fn add_wallpaper_to_images(resource_root: String, png_data: Vec<u8>) -> Result<String, String> {
+fn add_wallpaper_to_images(app: AppHandle, resource_root: String, png_data: Vec<u8>, rating: Option<u8>) -> Result<String, String> {
   let root = PathBuf::from(&resource_root);
   let images_dir = root.join("images");
   fs::create_dir_all(&images_dir).map_err(|error| error.to_string())?;
@@ -3291,6 +3324,7 @@ fn add_wallpaper_to_images(resource_root: String, png_data: Vec<u8>) -> Result<S
     .and_then(|value| value.to_str())
     .unwrap_or_default()
     .to_string();
+  write_initial_rating(&app, &root, &format!("images/{group_id}"), rating)?;
   Ok(group_id)
 }
 

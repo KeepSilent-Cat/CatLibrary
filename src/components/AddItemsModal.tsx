@@ -16,6 +16,7 @@ import {
 import type { CategoryKey } from "@/data/library";
 import type { LibraryItem } from "@/data/library";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/store/useAppStore";
 
 function defaultGroupName(path: string): string {
   const normalized = path.replace(/\\/g, "/");
@@ -67,6 +68,8 @@ export default function AddItemsModal({
   onOpenRequest,
   onAdded,
 }: AddItemsModalProps) {
+  // 新增条目的默认分级 = 当前显示范围（0 全年龄 / 1 R15 / 2 18+）
+  const ratingFilter = useAppStore((state) => state.ratingFilter);
   const [paths, setPaths] = useState<string[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [name, setName] = useState("");
@@ -269,6 +272,8 @@ export default function AddItemsModal({
             targetGroupId: targetGroup,
             displayName:
               targetGroup === null ? (name.trim() === "" ? null : name.trim()) : null,
+            // 新建漫画时的默认分级跟随当前显示范围（加入已有漫画则不动它的分级）
+            rating: targetGroup === null ? ratingFilter : null,
           });
           if (targetGroup === null && result.length > 0) {
             targetGroup = result[0];
@@ -282,6 +287,8 @@ export default function AddItemsModal({
           category,
           dropPaths: paths,
           displayName: name.trim() === "" ? null : name.trim(),
+          // 默认分级跟随当前显示范围：全年龄→0，R15→1，18+→2
+          rating: ratingFilter,
         });
         onAdded(created);
       }
