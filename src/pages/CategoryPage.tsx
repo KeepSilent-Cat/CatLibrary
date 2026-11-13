@@ -14,6 +14,7 @@ import {
   MousePointerClick,
   Plus,
   RotateCcw,
+  Tag,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -515,6 +516,8 @@ export default function CategoryPage({
 
   const ratingFilter = useAppStore((state) => state.ratingFilter);
   const tagFilter = useAppStore((state) => state.tagFilter);
+  const toggleTagFilter = useAppStore((state) => state.toggleTagFilter);
+  const clearTagFilter = useAppStore((state) => state.clearTagFilter);
 
   // 标签筛选条的候选标签：与内容共用同一套分级隐藏规则——
   // 被当前显示范围排除的素材，其独有的标签也不参与筛选（全年龄模式下不会冒出 18+ 专属标签）
@@ -703,6 +706,42 @@ export default function CategoryPage({
               ))}
             </select>
           </div>
+        </div>
+      ) : null}
+
+      {/* 标签快捷筛选条：标签多了以后比浮层更顺手 */}
+      {allTags.length > 0 ? (
+        <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
+          <Tag className="h-3.5 w-3.5 shrink-0 text-white/35" />
+          {allTags.slice(0, 16).map((tag) => {
+            const active = tagFilter.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleTagFilter(tag)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                  active
+                    ? "border-sky-300/50 bg-sky-300/20 text-sky-100"
+                    : "border-white/14 bg-white/6 text-white/58 hover:bg-white/12 hover:text-white/85"
+                }`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+          {allTags.length > 16 ? (
+            <span className="text-[11px] text-white/30">还有 {allTags.length - 16} 个，点右侧「标签」看全部</span>
+          ) : null}
+          {tagFilter.length > 0 ? (
+            <button
+              type="button"
+              onClick={clearTagFilter}
+              className="rounded-full border border-rose-300/30 bg-rose-300/10 px-2.5 py-1 text-[11px] text-rose-100 transition hover:bg-rose-300/20"
+            >
+              清除筛选（{tagFilter.length}）
+            </button>
+          ) : null}
         </div>
       ) : null}
 
