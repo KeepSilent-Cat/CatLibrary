@@ -832,24 +832,29 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
             </div>
           )}
         </div>
-        <button
-          type="button"
-          aria-label="上一页"
-          onClick={() => setPageIndex((index) => Math.max(0, index - 1))}
-          className="absolute top-1/2 left-3 -translate-y-1/2 rounded-full border border-white/12 bg-black/45 p-2 text-white/75 transition hover:bg-black/70 hover:text-white"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
-        <button
-          type="button"
-          aria-label="下一页"
-          onClick={() => setPageIndex((index) => Math.min(totalPages - 1, index + 1))}
-          className="absolute top-1/2 right-3 -translate-y-1/2 rounded-full border border-white/12 bg-black/45 p-2 text-white/75 transition hover:bg-black/70 hover:text-white"
-        >
-          <ChevronRight className="h-5 w-5" />
-        </button>
+        {totalPages > 1 ? (
+          <button
+            type="button"
+            aria-label="上一页"
+            onClick={() => setPageIndex((index) => Math.max(0, index - 1))}
+            className="absolute top-1/2 left-3 -translate-y-1/2 rounded-full border border-white/12 bg-black/45 p-2 text-white/75 transition hover:bg-black/70 hover:text-white"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+        ) : null}
+        {totalPages > 1 ? (
+          <button
+            type="button"
+            aria-label="下一页"
+            onClick={() => setPageIndex((index) => Math.min(totalPages - 1, index + 1))}
+            className="absolute top-1/2 right-3 -translate-y-1/2 rounded-full border border-white/12 bg-black/45 p-2 text-white/75 transition hover:bg-black/70 hover:text-white"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        ) : null}
         <div className="shrink-0 pb-3 text-center text-xs text-white/45">
-          {pageIndex + 1} / {totalPages} · 可用 ← → 键翻页
+          {pageIndex + 1} / {totalPages}
+          {totalPages > 1 ? " · 可用 ← → 键翻页" : ""}
         </div>
       </div>
     );
@@ -923,10 +928,26 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
               src={page.url}
               alt={`${currentChapterLabel} 第 ${page.index + 1} 页`}
               loading={autoPlay && autoSkipPages > 0 && page.index <= autoSkipPages ? "eager" : "lazy"}
-              style={{
-                display: "block",
-                width: gridMode ? "100%" : readMode === "double" ? `calc(50% - ${spacing / 2}px)` : "100%",
-              }}
+              style={
+                isComics
+                  ? {
+                      display: "block",
+                      width: gridMode
+                        ? "100%"
+                        : readMode === "double"
+                          ? `calc(50% - ${spacing / 2}px)`
+                          : "100%",
+                    }
+                  : {
+                      // 图片模式：竖屏截图（手机比例）按视口高度自适应，不再撑出屏幕
+                      display: "block",
+                      margin: "0 auto",
+                      width: gridMode ? "100%" : "auto",
+                      maxWidth: "100%",
+                      maxHeight: gridMode ? undefined : "calc(100vh - 210px)",
+                      objectFit: "contain" as const,
+                    }
+              }
               className="bg-black/20"
             />
           );
