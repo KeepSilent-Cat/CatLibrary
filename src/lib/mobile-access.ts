@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type MobileAccessInfo = {
+  /** 首选地址（默认路由网卡） */
   url: string;
+  /** 所有可用地址，换网络后挑能连上的那个 */
+  urls: string[];
   token: string;
   port: number;
 };

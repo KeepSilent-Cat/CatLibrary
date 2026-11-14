@@ -42,7 +42,10 @@ fn list_source_files(dir: &Path) -> Vec<PathBuf> {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MobileAccessInfo {
+  /// 首选地址（默认路由网卡）
   pub url: String,
+  /// 所有可用地址：换热点 / 插网线 / USB 转发时挑能用的那个
+  pub urls: Vec<String>,
   pub token: String,
   pub port: u16,
 }
@@ -68,6 +71,30 @@ fn lan_ip() -> Option<Ipv4Addr> {
   }
 }
 
+/// 列出本机其它可用的内网 IPv4（解析 ipconfig，避免额外依赖）
+fn other_ipv4_addresses(primary: Ipv4Addr) -> Vec<Ipv4Addr> {
+  let Ok(output) = std::process::Command::new("ipconfig").output() else {
+    return Vec::new();
+  };
+  let text = String::from_utf8_lossy(&output.stdout);
+  let mut found: Vec<Ipv4Addr> = Vec::new();
+  for token in text.split(|ch: char| !(ch.is_ascii_digit() || ch == '.')) {
+    let trimmed = token.trim_matches('.');
+    if trimmed.is_empty() || trimmed.matches('.').count() != 3 {
+      continue;
+    }
+    let Ok(ip) = trimmed.parse::<Ipv4Addr>() else { continue };
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_link_local() || ip == primary {
+      continue;
+    }
+    if found.contains(&ip) {
+      continue;
+    }
+    found.push(ip);
+  }
+  found
+}
+
 fn make_token() -> String {
   let nanos = SystemTime::now()
     .duration_since(UNIX_EPOCH)
@@ -89,15 +116,22 @@ pub fn start(app: tauri::AppHandle, resource_root: String) -> Result<MobileAcces
     return Err("素材库目录不存在，先在设置里选择资源库".into());
   }
 
-  let ip = lan_ip().ok_or_else(|| "没有找到内网地址，请确认电脑已连上 WiFi 或网线".to_string())?;
-  let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(ip), 0))
-    .map_err(|error| format!("启动内网服务失败：{error}"))?;
+  let ip = lan_ip().unwrap_or(Ipv4Addr::LOCALHOST);
+  // 绑定所有网卡：换 WiFi / 连手机热点 / 插网线 / USB 转发都能直接连通，
+  // 不需要每次重新开启；没有公网 IP 时外部依然进不来，且所有请求都要 token。
+  let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
+    .map_err(|error| format!("启动服务失败：{error}"))?;
   let port = listener.local_addr().map_err(|error| error.to_string())?.port();
   let token = make_token();
   let stop = Arc::new(AtomicBool::new(false));
 
+  let mut urls = vec![format!("http://{ip}:{port}/?t={token}")];
+  for candidate in other_ipv4_addresses(ip) {
+    urls.push(format!("http://{candidate}:{port}/?t={token}"));
+  }
   let info = MobileAccessInfo {
-    url: format!("http://{ip}:{port}/?t={token}"),
+    url: urls[0].clone(),
+    urls,
     token: token.clone(),
     port,
   };
@@ -221,6 +255,7 @@ fn handle_connection(
   }
 
   match request.path.as_str() {
+    "/ping" => respond_bytes(&mut stream, 200, "text/plain; charset=utf-8", b"ok", None),
     "/api/index" => match app.ok_or("服务未就绪".to_string()).and_then(|handle| build_index(root, handle)) {
       Ok(json) => respond_bytes(
         &mut stream,
