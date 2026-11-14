@@ -249,6 +249,11 @@ fn handle_connection(
     return respond_bytes(&mut stream, 200, "text/html; charset=utf-8", html.as_bytes(), None);
   }
 
+  // /ping 不需要 token：只回 ok，专门用来判断"手机能不能连上电脑"
+  if request.path == "/ping" {
+    return respond_bytes(&mut stream, 200, "text/plain; charset=utf-8", b"ok", None);
+  }
+
   let given = query_value(&request.query, "t").unwrap_or_default();
   if !constant_eq(&given, token) {
     return respond_text(&mut stream, 401, "token 无效，请重新扫码或在电脑上重新启动手机访问");
