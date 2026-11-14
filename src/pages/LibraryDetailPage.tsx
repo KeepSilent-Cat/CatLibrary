@@ -280,11 +280,14 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
     setTagInput("");
   };
 
-  // 建议：全库已有但当前条目还没加的标签
-  const tagSuggestions = useMemo(
-    () => allTags.filter((tag) => !tagDraft.includes(tag)).slice(0, 12),
-    [allTags, tagDraft],
-  );
+  // 已有标签候选：跟随输入框实时过滤，最多 60 个（点一下即可加入）
+  const tagSuggestions = useMemo(() => {
+    const word = tagInput.trim().toLowerCase();
+    return allTags
+      .filter((tag) => !tagDraft.includes(tag))
+      .filter((tag) => (word ? tag.toLowerCase().includes(word) : true))
+      .slice(0, 60);
+  }, [allTags, tagDraft, tagInput]);
 
   const handleSave = async () => {
     if (!currentItem) {
@@ -1181,6 +1184,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                   </div>
                   <input
                     value={tagInput}
+                    list="detail-tag-options"
                     onChange={(event) => setTagInput(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === "," || event.key === "，") {
@@ -1194,21 +1198,32 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                         setTagDraft((current) => current.slice(0, -1));
                       }
                     }}
-                    placeholder="输入标签后回车添加…"
+                    placeholder="搜索已有标签，或输入新标签后回车添加…"
                     className="mt-2 w-full rounded-2xl border border-white/18 bg-white/10 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-white/36 focus:bg-white/14"
                   />
+                  <datalist id="detail-tag-options">
+                    {allTags.map((tag) => (
+                      <option key={tag} value={tag} />
+                    ))}
+                  </datalist>
                   {tagSuggestions.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {tagSuggestions.map((tag) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => addTag(tag)}
-                          className="rounded-full border border-white/14 bg-white/6 px-2.5 py-1 text-[11px] text-white/60 transition hover:bg-white/14"
-                        >
-                          + {tag}
-                        </button>
-                      ))}
+                    <div className="mt-2 rounded-[14px] border border-white/10 bg-black/20 p-2">
+                      <p className="mb-1.5 flex items-center justify-between text-[10px] text-white/30">
+                        <span>已有标签，点一下即可加入</span>
+                        <span className="tabular-nums">{tagSuggestions.length} 个候选</span>
+                      </p>
+                      <div className="flex max-h-[132px] flex-wrap gap-1.5 overflow-y-auto pr-1">
+                        {tagSuggestions.map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => addTag(tag)}
+                            className="rounded-full border border-white/14 bg-white/6 px-2.5 py-1 text-[11px] text-white/65 transition hover:border-sky-300/45 hover:bg-sky-300/15 hover:text-sky-50"
+                          >
+                            + {tag}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                   <p className="mt-2 text-[11px] leading-5 text-white/42">

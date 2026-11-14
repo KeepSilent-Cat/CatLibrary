@@ -1,47 +1,239 @@
-import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowRight, ChevronLeft, ChevronRight, Shuffle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { LibraryItem } from "@/data/library";
+import { categoryMeta, type LibraryItem } from "@/data/library";
 
+const ROTATE_MS = 7000;
+const THUMB_COUNT = 6;
+
+/** 首页「探索队列」：Steam 商店风格的整幅大图 + 侧栏信息 + 底部缩略图队列 */
 export default function RandomShowcase({ items }: { items: LibraryItem[] }) {
   const navigate = useNavigate();
-  const key = items.map(item => item.category + '/' + item.id).join('|');
-  const [selection, setSelection] = useState(() => ({key, index: Math.floor(Math.random() * Math.max(1, items.length))}));
-  // 首页异步读取馆藏；在真正有数据时取随机起点，避免空数组的0成为固定首张。
-  let index = selection.index;
-  if (selection.key !== key) {
-    index = Math.floor(Math.random() * Math.max(1, items.length));
-    setSelection({key, index});
-  }
-  const randomNext = () => setSelection(current => {
-    if (items.length < 2) return current;
-    const next = Math.floor(Math.random() * (items.length - 1));
-    return {key, index: next >= current.index % items.length ? next + 1 : next};
-  });
-  const [paused, setPaused] = useState(false);
+  const listKey = items.map((item) => `${item.category}/${item.id}`).join("|");
+  const [cursor, setCursor] = useState(() => ({ key: listKey, index: 0 }));
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+
+  const count = items.length;
+  const index = cursor.key === listKey ? cursor.index % Math.max(1, count) : 0;
+
   useEffect(() => {
-    if (paused || hovered || focused || items.length < 2) return;
-    const timer = setInterval(() => {
-      if (!document.hidden) randomNext();
-    }, 7000);
-    return () => clearInterval(timer);
-  }, [paused, hovered, focused, key]);
-  const item = items[index % items.length];
-  if (!item) return null;
-  const arrow = "absolute top-1/2 z-10 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full border border-white/24 bg-white/10 text-white/80 shadow-lg backdrop-blur-xl transition hover:bg-white/25 hover:text-white disabled:opacity-25";
+    if (count < 2) {
+      return;
+    }
+    if (hovered || focused || document.hidden) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setCursor((current) => ({
+        key: listKey,
+        index: (current.key === listKey ? current.index + 1 : 1) % count,
+      }));
+    }, ROTATE_MS);
+    return () => window.clearInterval(timer);
+  }, [count, hovered, focused, listKey]);
+
+  const item = items[index];
+  const meta = useMemo(
+    () => categoryMeta.find((entry) => entry.key === item?.category),
+    [item?.category],
+  );
+
+  const go = (next: number) => {
+    if (count < 2) {
+      return;
+    }
+    setCursor({ key: listKey, index: ((next % count) + count) % count });
+  };
+
+  // 底部缩略图队列：从当前项往后取若干个，形成「接下来要看什么」的感觉
+  const queue = useMemo(() => {
+    if (count === 0) {
+      return [] as Array<{ item: LibraryItem; position: number }>;
+    }
+    const size = Math.min(THUMB_COUNT, count);
+    return Array.from({ length: size }, (_, offset) => ({
+      item: items[(index + offset) % count],
+      position: (index + offset) % count,
+    }));
+  }, [items, index, count]);
+
+  if (!item) {
+    return null;
+  }
+
+  const cover = item.coverImage ?? item.coverThumb;
+  const arrow =
+    "absolute top-[38%] z-20 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full border border-white/20 bg-black/45 text-white/85 opacity-0 backdrop-blur-md transition hover:bg-black/70 hover:text-white group-hover:opacity-100 disabled:hidden";
+
   return (
-    <section className="relative mt-6 overflow-hidden rounded-[28px] border border-white/20 bg-black/12"
-      aria-label="随机馆藏轮播" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }}>
-      <button className={`${arrow} left-4`} aria-label="上一个馆藏" disabled={items.length < 2} onClick={() => randomNext()}><ChevronLeft size={20} /></button>
-      <button className="flex min-h-56 w-full items-center gap-7 px-20 py-6 text-left" onClick={() => navigate(`/${item.category}/${item.id}`)}>
-        {item.coverImage && <img key={`${item.category}/${item.id}`} src={item.coverImage} className="h-48 w-1/2 rounded-2xl object-contain" alt={item.title} />}
-        <span className="min-w-0 flex-1"><small className="text-xs tracking-wider text-white/50">随手翻翻</small><h2 className="mt-3 text-xl font-semibold">{item.altName || item.title}</h2><p className="mt-3 text-xs leading-6 text-white/55">从你的藏馆里，偶遇一点喜欢。<br />点击进入 · 每 7 秒随机切换</p></span>
+    <section
+      aria-label="探索队列"
+      className="group relative mt-6 overflow-hidden rounded-[26px] border border-white/12 bg-black/30"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setFocused(false);
+        }
+      }}
+    >
+      {/* 背景：封面模糊铺底 + 左侧渐隐，保证文字可读 */}
+      {cover ? (
+        <img
+          key={`${item.category}/${item.id}-bg`}
+          src={cover}
+          alt=""
+          aria-hidden
+          className="absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-[3px]"
+        />
+      ) : (
+        <div className="absolute inset-0 bg-[linear-gradient(140deg,rgba(56,32,74,0.9),rgba(18,16,28,0.95))]" />
+      )}
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(10,9,16,0.96)_0%,rgba(10,9,16,0.78)_42%,rgba(10,9,16,0.32)_72%,rgba(10,9,16,0.18)_100%)]" />
+
+      <button
+        type="button"
+        aria-label="上一个馆藏"
+        disabled={count < 2}
+        onClick={() => go(index - 1)}
+        className={`${arrow} left-3`}
+      >
+        <ChevronLeft size={20} />
       </button>
-      <button className={`${arrow} right-4`} aria-label="下一个馆藏" disabled={items.length < 2} onClick={() => randomNext()}><ChevronRight size={20} /></button>
-      <div className="flex items-center justify-between border-t border-white/10 px-6 py-3 text-[11px] text-white/45"><span>只展示当前显示范围内的内容</span><button className="inline-flex items-center gap-1.5 text-white/65 transition hover:text-white" onClick={() => setPaused(!paused)}>{paused ? <Play size={12} /> : <Pause size={12} />}{paused ? "继续轮播" : "暂停轮播"}</button></div>
+      <button
+        type="button"
+        aria-label="下一个馆藏"
+        disabled={count < 2}
+        onClick={() => go(index + 1)}
+        className={`${arrow} right-3`}
+      >
+        <ChevronRight size={20} />
+      </button>
+
+      <div className="relative grid gap-5 p-6 sm:grid-cols-[minmax(0,1fr)_260px] sm:items-center">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-sky-300/35 bg-sky-300/15 px-2.5 py-0.5 text-[10px] tracking-wide text-sky-100">
+              {meta?.title ?? "馆藏"}
+            </span>
+            {item.rating > 0 ? (
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                  item.rating === 2
+                    ? "border-rose-300/40 bg-rose-950/60 text-rose-200"
+                    : "border-amber-300/40 bg-amber-950/60 text-amber-200"
+                }`}
+              >
+                {item.rating === 2 ? "18+" : "R15"}
+              </span>
+            ) : null}
+          </div>
+
+          <h2 className="mt-2.5 line-clamp-1 text-[22px] font-semibold leading-tight text-white">
+            {item.altName ?? item.title}
+          </h2>
+          {item.altName ? (
+            <p className="mt-0.5 line-clamp-1 text-xs text-white/40">{item.title}</p>
+          ) : null}
+          <p className="mt-2 line-clamp-2 max-w-[46ch] text-xs leading-6 text-white/55">
+            {item.summary}
+          </p>
+
+          {item.tags.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {item.tags.slice(0, 5).map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-white/14 bg-white/8 px-2 py-0.5 text-[10px] text-white/60"
+                >
+                  {tag}
+                </span>
+              ))}
+              {item.tags.length > 5 ? (
+                <span className="text-[10px] text-white/30">+{item.tags.length - 5}</span>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate(`/${item.category}/${item.id}`)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/92 px-4 py-1.5 text-xs font-semibold text-slate-900 transition hover:bg-white"
+            >
+              查看详情
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => go(index + 1)}
+              disabled={count < 2}
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/18 bg-white/8 px-3.5 py-1.5 text-xs text-white/75 transition hover:bg-white/16 disabled:opacity-40"
+            >
+              <Shuffle className="h-3.5 w-3.5" />
+              换一个
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => navigate(`/${item.category}/${item.id}`)}
+          className="hidden overflow-hidden rounded-[16px] border border-white/18 shadow-[0_18px_50px_rgba(0,0,0,0.45)] transition hover:border-white/35 sm:block"
+          aria-label={`打开 ${item.altName ?? item.title}`}
+        >
+          {cover ? (
+            <img
+              key={`${item.category}/${item.id}-card`}
+              src={cover}
+              alt={item.title}
+              className="h-[190px] w-full object-cover"
+            />
+          ) : (
+            <div className="grid h-[190px] w-full place-items-center bg-black/40 text-xs text-white/35">
+              暂无封面
+            </div>
+          )}
+        </button>
+      </div>
+
+      {/* 底部缩略图队列 */}
+      {count > 1 ? (
+        <div className="relative border-t border-white/10 bg-black/35 px-5 py-3">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {queue.map(({ item: queued, position }) => {
+              const active = position === index;
+              const thumb = queued.coverImage ?? queued.coverThumb;
+              return (
+                <button
+                  key={`${queued.category}/${queued.id}`}
+                  type="button"
+                  onClick={() => go(position)}
+                  title={queued.altName ?? queued.title}
+                  className={`relative h-11 w-20 shrink-0 overflow-hidden rounded-[8px] border transition ${
+                    active
+                      ? "border-sky-300/80 shadow-[0_0_0_2px_rgba(125,211,252,0.35)]"
+                      : "border-white/12 opacity-60 hover:opacity-100"
+                  }`}
+                >
+                  {thumb ? (
+                    <img src={thumb} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="grid h-full w-full place-items-center bg-white/6 text-[9px] text-white/35">
+                      无封面
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            <span className="ml-auto shrink-0 text-[10px] tabular-nums text-white/25">
+              {index + 1} / {count}
+            </span>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
