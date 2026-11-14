@@ -1442,11 +1442,17 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
                 </p>
                 <ImageMoveControl
                   groupId={itemId}
+                  sourceRating={payload?.rating ?? 0}
                   initialPath={
                     readMode === "paged" ? currentChapter?.images[currentViewPage?.index ?? 0] : undefined
                   }
                   paths={currentChapter?.images ?? []}
-                  onMoved={() => navigate("/images")}
+                  onMoved={(sourceGroupRemoved) => {
+                    if (sourceGroupRemoved) {
+                      useAppStore.getState().setSavedToast("源合集已空，已自动移除");
+                    }
+                    navigate("/images");
+                  }}
                 />
               </div>
             ) : null}

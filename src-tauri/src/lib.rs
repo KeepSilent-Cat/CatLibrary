@@ -3923,6 +3923,13 @@ fn move_image_checked(
     }
     Ok(to)
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MoveImageResult {
+  path: String,
+  source_group_removed: bool,
+}
+
 #[tauri::command]
 fn move_image_to_collection(
     app: AppHandle,
@@ -3930,22 +3937,28 @@ fn move_image_to_collection(
     source_group: String,
     target_group: String,
     source_path: String,
-) -> Result<String, String> {
+) -> Result<MoveImageResult, String> {
     let root = PathBuf::from(resource_root);
-    let metadata = load_library_metadata(&app, &root)?;
-    let from = metadata
-        .get(&format!("images/{source_group}"))
-        .cloned()
-        .unwrap_or_default();
-    let to = metadata
-        .get(&format!("images/{target_group}"))
-        .cloned()
-        .unwrap_or_default();
-    if rating_of(&to) < rating_of(&from) {
-        return Err("为避免受限图片进入全年龄合集，请先提高目标合集分级".into());
+    // 图片本身没有独立分级，跟着所在合集走；用户主动移入哪个合集就接受那个合集的分级
+    let moved = move_image_checked(&root, &source_group, &target_group, Path::new(&source_path))?;
+
+    // 源合集被搬空后自动清理，避免列表里留下空卡片
+    let mut source_group_removed = false;
+    let source_dir = root.join("images").join(&source_group);
+    if is_dir_empty(&source_dir.join("source")) {
+        let _ = fs::remove_dir_all(&source_dir);
+        if let Ok(mut metadata) = load_library_metadata(&app, &root) {
+            if metadata.remove(&format!("images/{source_group}")).is_some() {
+                let _ = write_library_metadata(&app, &root, &metadata);
+            }
+        }
+        source_group_removed = true;
     }
-    move_image_checked(&root, &source_group, &target_group, Path::new(&source_path))
-        .map(path_to_string)
+
+    Ok(MoveImageResult {
+        path: path_to_string(moved),
+        source_group_removed,
+    })
 }
 
 fn save_video_cover_checked(
