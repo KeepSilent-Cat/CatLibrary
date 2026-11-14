@@ -1557,6 +1557,8 @@ struct BulkMetadataPatch {
   rating: Option<u8>,
   #[serde(default)]
   add_tags: Vec<String>,
+  #[serde(default)]
+  remove_tags: Vec<String>,
 }
 
 /// 批量整理：一次性写入多条的分级与标签（只加载/写盘一次，比逐条调用快得多）。
@@ -1577,6 +1579,12 @@ fn bulk_update_metadata(
     if let Some(rating) = patch.rating {
       entry.rating = Some(rating.min(2));
       entry.adult = Some(rating >= 2);
+    }
+
+    if !patch.remove_tags.is_empty() {
+      if let Some(tags) = entry.tags.as_mut() {
+        tags.retain(|tag| !patch.remove_tags.iter().any(|remove| remove == tag));
+      }
     }
 
     if !patch.add_tags.is_empty() {

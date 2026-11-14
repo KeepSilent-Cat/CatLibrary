@@ -21,7 +21,7 @@ export default function LibraryCard({
   videoMuted,
   videoSoundMode,
   videoFitMode,
-  showInfo = true,
+  infoMode = "full",
   favorite = false,
   selected = false,
   batchSelected = false,
@@ -38,7 +38,8 @@ export default function LibraryCard({
   videoMuted: boolean;
   videoSoundMode: VideoSoundMode;
   videoFitMode: VideoFitMode;
-  showInfo?: boolean;
+  /** 信息密度：完整 / 简洁（仅标题 + 一行元信息）/ 隐藏 */
+  infoMode?: "full" | "compact" | "hidden";
   favorite?: boolean;
   selected?: boolean;
   /** 批量整理模式：卡片显示勾选框，点击切换选中而不是打开详情 */
@@ -309,31 +310,49 @@ export default function LibraryCard({
         <div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(31,41,55,0.88),rgba(15,23,42,0.94),rgba(24,24,27,0.94))]" />
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-black/72 via-black/18 to-black/38" />
-      {showInfo ? (
-        <div className="relative flex h-full flex-col justify-start p-4">
-          <div className="max-w-full rounded-[18px] bg-black/18 px-3.5 py-2.5">
-            <h3 className="text-sm font-semibold tracking-[0.02em] text-white">
+      {infoMode !== "hidden" ? (
+        <div className="relative flex h-full flex-col justify-end p-3 pr-12">
+          <div className="max-w-full rounded-[14px] bg-black/32 px-3 py-2">
+            <h3 className="truncate text-[13px] font-semibold tracking-[0.01em] text-white">
               {item.altName ?? item.title}
             </h3>
-            {item.altName ? (
-              <p className="mt-0.5 text-[11px] leading-4 text-white/55">{item.title}</p>
+            {infoMode === "full" ? (
+              <>
+                {item.altName ? (
+                  <p className="mt-0.5 truncate text-[10px] leading-4 text-white/45">{item.title}</p>
+                ) : null}
+                <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/70">{item.summary}</p>
+              </>
             ) : null}
-            <p className="mt-1 text-xs leading-5 text-white/78">{item.summary}</p>
-            <p className="mt-2 text-[11px] uppercase tracking-[0.18em] text-white/48">
-              {fallbackLabel} · {item.sourceCount}
-            </p>
-            {item.tags.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {item.tags.slice(0, 4).map((tag) => (
+            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-white/42">
+              <span className="truncate">
+                {fallbackLabel} · {item.sourceCount}
+              </span>
+              {item.rating > 0 ? (
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full border px-1.5 py-px text-[9px] font-semibold tracking-normal",
+                    item.rating === 2
+                      ? "border-rose-300/45 bg-rose-950/70 text-rose-200"
+                      : "border-amber-300/45 bg-amber-950/70 text-amber-200",
+                  )}
+                >
+                  {RATING_OPTIONS.find((option) => option.value === item.rating)?.short}
+                </span>
+              ) : null}
+            </div>
+            {infoMode === "full" && item.tags.length > 0 ? (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {item.tags.slice(0, 3).map((tag) => (
                   <span
                     key={tag}
-                    className="rounded-full border border-sky-300/30 bg-sky-300/12 px-2 py-0.5 text-[10px] text-sky-100/90"
+                    className="rounded-full border border-sky-300/28 bg-sky-300/10 px-1.5 py-px text-[9px] text-sky-100/85"
                   >
                     {tag}
                   </span>
                 ))}
-                {item.tags.length > 4 ? (
-                  <span className="text-[10px] text-white/45">+{item.tags.length - 4}</span>
+                {item.tags.length > 3 ? (
+                  <span className="text-[9px] text-white/40">+{item.tags.length - 3}</span>
                 ) : null}
               </div>
             ) : null}
@@ -375,14 +394,14 @@ export default function LibraryCard({
           <Maximize2 className="h-4 w-4" />
         </button>
       ) : null}
-      {/* 分级角标：R15 / 18+ */}
-      {item.rating > 0 && (
+      {/* 隐藏信息时只留一个小分级角标，避免遮挡画面 */}
+      {infoMode === "hidden" && item.rating > 0 && (
         <span
           className={cn(
-            "absolute left-3 top-3 z-10 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide",
+            "absolute bottom-2.5 left-2.5 z-10 rounded-full border px-1.5 py-px text-[9px] font-semibold tracking-wide",
             item.rating === 2
-              ? "border-rose-300/50 bg-rose-950/78 text-rose-200"
-              : "border-amber-300/50 bg-amber-950/78 text-amber-200",
+              ? "border-rose-300/45 bg-rose-950/70 text-rose-200"
+              : "border-amber-300/45 bg-amber-950/70 text-amber-200",
           )}
         >
           {RATING_OPTIONS.find((option) => option.value === item.rating)?.short}

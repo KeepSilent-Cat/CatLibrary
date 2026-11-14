@@ -940,7 +940,6 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {category==="images"&&itemId&&<ImageMoveControl groupId={itemId} initialPath={readMode==="paged"?currentChapter?.images[currentViewPage?.index??0]:undefined} paths={currentChapter?.images??[]} onMoved={()=>navigate("/images")}/>}
       {/* 顶栏 */}
       <div className="relative flex shrink-0 items-center gap-4 px-5 pb-3 pt-5">
         <button
@@ -1409,6 +1408,23 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
                 </div>
               </div>
             </div>
+
+            {!isComics && itemId ? (
+              <div className="mt-5 rounded-[16px] border border-white/12 bg-white/5 p-3">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-white/40">编辑</p>
+                <p className="mb-2 mt-1 text-[11px] leading-4 text-white/35">
+                  只在这一张需要换位置时用；会真实移动本地原文件。
+                </p>
+                <ImageMoveControl
+                  groupId={itemId}
+                  initialPath={
+                    readMode === "paged" ? currentChapter?.images[currentViewPage?.index ?? 0] : undefined
+                  }
+                  paths={currentChapter?.images ?? []}
+                  onMoved={() => navigate("/images")}
+                />
+              </div>
+            ) : null}
 
             <div className="mt-5 flex justify-end">
               <button

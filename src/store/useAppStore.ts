@@ -16,6 +16,9 @@ export type BoardPanelKind = "item" | "report" | "text";
 /** 文字面板的三档字号 */
 export type BoardTextStyle = "title" | "subtitle" | "caption";
 
+/** 卡片信息密度：完整（标题+简介+标签）/ 紧凑（标题+一行元信息）/ 隐藏 */
+export type CardInfoMode = "full" | "compact" | "hidden";
+
 export interface BoardPanel {
   id: string;
   kind: BoardPanelKind;
@@ -76,8 +79,10 @@ interface AppState {
   favoriteIds: string[];
   // 内容分级显示范围：0=仅全年龄 1=含擦边R15 2=全部（默认仅全年龄，标记内容默认隐藏）
   ratingFilter: ContentRating;
-  // 标签筛选：当前选中的标签（会话内，不持久化；命中需同时包含全部选中标签）
-  tagFilter: string[];
+  // 标签筛选：按分类独立保存（scope = 分类 key），切换分类不会互相影响
+  tagFilters: Record<string, string[]>;
+  // 卡片信息密度：完整 / 紧凑 / 隐藏（全局统一）
+  cardInfoMode: CardInfoMode;
   // 截图：快捷键（如 "ctrl+shift+s"）、打开状态、保存成功提示
   screenshotShortcut: string;
   screenshotOpen: boolean;
@@ -108,8 +113,9 @@ interface AppState {
   setVideoFitMode: (value: VideoFitMode) => void;
   setVideoProgress: (value: number) => void;
   setRatingFilter: (value: ContentRating) => void;
-  toggleTagFilter: (tag: string) => void;
-  clearTagFilter: () => void;
+  toggleTagFilter: (scope: string, tag: string) => void;
+  clearTagFilter: (scope: string) => void;
+  setCardInfoMode: (value: CardInfoMode) => void;
   setScreenshotShortcut: (value: string) => void;
   setAutoPlaySpeed: (value: number) => void;
   setChapterDelay: (value: number) => void;
@@ -167,7 +173,8 @@ export const useAppStore = create<AppState>()(
       boards: [],
       activeBoardId: "",
       ratingFilter: 0,
-      tagFilter: [],
+      tagFilters: {},
+      cardInfoMode: "compact",
       screenshotShortcut: "ctrl+shift+s",
       screenshotOpen: false,
       screenshotTarget: { type: "library" },
@@ -193,13 +200,17 @@ export const useAppStore = create<AppState>()(
       setVideoFitMode: (value) => set({ videoFitMode: value }),
       setVideoProgress: (value) => set({ videoProgress: value }),
       setRatingFilter: (value) => set({ ratingFilter: value }),
-      toggleTagFilter: (tag) =>
-        set((state) => ({
-          tagFilter: state.tagFilter.includes(tag)
-            ? state.tagFilter.filter((existing) => existing !== tag)
-            : [...state.tagFilter, tag],
-        })),
-      clearTagFilter: () => set({ tagFilter: [] }),
+      toggleTagFilter: (scope, tag) =>
+        set((state) => {
+          const current = state.tagFilters[scope] ?? [];
+          const next = current.includes(tag)
+            ? current.filter((existing) => existing !== tag)
+            : [...current, tag];
+          return { tagFilters: { ...state.tagFilters, [scope]: next } };
+        }),
+      clearTagFilter: (scope) =>
+        set((state) => ({ tagFilters: { ...state.tagFilters, [scope]: [] } })),
+      setCardInfoMode: (value) => set({ cardInfoMode: value }),
       setScreenshotShortcut: (value) => set({ screenshotShortcut: value }),
       setAutoPlaySpeed: (value) => set({ autoPlaySpeed: value }),
       setChapterDelay: (value) => set({ chapterDelay: value }),

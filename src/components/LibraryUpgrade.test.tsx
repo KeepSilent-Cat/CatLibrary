@@ -19,7 +19,7 @@ vi.mock('@/components/LibraryCard', () => ({ default: ({ item, onClick }: {
         onClick: (i: LibraryItem) => void;
     }) => <button onClick={() => onClick(item)}>{item.title}</button> }));
 function item(id: string, rating: 0 | 2 = 0): LibraryItem { return { id, title: 'image-' + id, category: 'images', summary: '', relativePath: id, coverType: 'fallback', previewImages: [], sourceCount: 1, modifiedAt: 0, sourceEntries: [], rating, tags: [] }; }
-beforeEach(() => { useAppStore.setState({ resourceRoot: 'test-fixture', ratingFilter: 0, favoriteIds: [], extraRatings: {}, boards: [], tagFilter: [] }); index.images = []; vi.stubGlobal('ResizeObserver', class {
+beforeEach(() => { useAppStore.setState({ resourceRoot: 'test-fixture', ratingFilter: 0, favoriteIds: [], extraRatings: {}, boards: [], tagFilters: {} }); index.images = []; vi.stubGlobal('ResizeObserver', class {
     observe() { }
     disconnect() { }
 }); });

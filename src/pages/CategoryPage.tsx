@@ -19,6 +19,7 @@ import {
   Tag,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +40,8 @@ import {
 import { loadLibraryIndex, clearLibraryIndexCache, filterLibraryIndex } from "@/lib/library-source";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/useAppStore";
+
+const EMPTY_TAGS: string[] = [];
 
 // 生成翻页数字：当前页附近的 5 页（当前页尽量居中），边界裁剪
 function getPageNumbers(current: number, total: number): number[] {
@@ -518,7 +521,10 @@ export default function CategoryPage({
   }, []);
 
   const ratingFilter = useAppStore((state) => state.ratingFilter);
-  const tagFilter = useAppStore((state) => state.tagFilter);
+  const tagFilterRaw = useAppStore((state) => state.tagFilters[category] as string[] | undefined);
+  const tagFilter = tagFilterRaw ?? EMPTY_TAGS;
+  const cardInfoMode = useAppStore((state) => state.cardInfoMode);
+  const setCardInfoMode = useAppStore((state) => state.setCardInfoMode);
   const toggleTagFilter = useAppStore((state) => state.toggleTagFilter);
   const clearTagFilter = useAppStore((state) => state.clearTagFilter);
 
@@ -624,6 +630,45 @@ export default function CategoryPage({
       setBatchTagInput("");
     } catch (currentError) {
       setSavedToast(currentError instanceof Error ? currentError.message : "批量加标签失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  // 选中条目里已经存在的标签（用于一键移除）
+  const batchTagPool = useMemo(() => {
+    if (batchSelection.length === 0) {
+      return [] as string[];
+    }
+    const counts = new Map<string, number>();
+    for (const item of items) {
+      if (!batchSelection.includes(item.id)) {
+        continue;
+      }
+      for (const tag of item.tags) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 10)
+      .map(([tag]) => tag);
+  }, [items, batchSelection]);
+
+  const applyBatchRemoveTag = async (tag: string) => {
+    if (batchSelection.length === 0 || batchBusy) {
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      await invoke("bulk_update_metadata", {
+        resourceRoot,
+        patches: batchSelection.map((id) => ({ category, itemId: id, removeTags: [tag] })),
+      });
+      refreshAfterBatch();
+      setSavedToast(`已从 ${batchSelection.length} 个条目移除标签「${tag}」`);
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "移除标签失败");
     } finally {
       setBatchBusy(false);
     }
@@ -820,10 +865,10 @@ export default function CategoryPage({
       }
     >
       {!hideHeader && !fullscreen ? (
-        <div className="mb-4 flex items-end justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-white/48">{meta.title}</p>
-            <h2 className="mt-2 text-lg font-semibold text-white">{meta.description}</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <p className="shrink-0 text-xs uppercase tracking-[0.2em] text-white/45">{meta.title}</p>
+            <p className="truncate text-[11px] text-white/30">{meta.description}</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="glass-chip px-3 py-1 text-xs text-white/72">
@@ -863,7 +908,24 @@ export default function CategoryPage({
               <ListChecks className="h-3.5 w-3.5" />
               {batchMode ? "退出批量" : "批量"}
             </button>
-            <TagFilterControl tags={allTags} />
+            <button
+              type="button"
+              onClick={() =>
+                setCardInfoMode(
+                  cardInfoMode === "full" ? "compact" : cardInfoMode === "compact" ? "hidden" : "full",
+                )
+              }
+              title="卡片信息：完整 → 简洁 → 隐藏（所有分类通用）"
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition ${
+                cardInfoMode === "hidden"
+                  ? "border-white/12 bg-white/4 text-white/45"
+                  : "border-white/16 bg-white/8 text-white/76 hover:bg-white/16"
+              }`}
+            >
+              {cardInfoMode === "hidden" ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              {cardInfoMode === "full" ? "完整信息" : cardInfoMode === "compact" ? "简洁信息" : "隐藏信息"}
+            </button>
+            <TagFilterControl tags={allTags} scope={category} />
             <select
               value={sortMode}
               onChange={(event) => {setPage(0);setSortMode(event.target.value as SortMode);}}
@@ -879,8 +941,8 @@ export default function CategoryPage({
         </div>
       ) : null}
 
-      {/* 标签快捷筛选条：标签多了以后比浮层更顺手 */}
-      {allTags.length > 0 ? (
+      {/* 已选标签条：只在有筛选时出现，省一行高度 */}
+      {tagFilter.length > 0 ? (
         <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
           <Tag className="h-3.5 w-3.5 shrink-0 text-white/35" />
           {allTags.slice(0, 16).map((tag) => {
@@ -889,7 +951,7 @@ export default function CategoryPage({
               <button
                 key={tag}
                 type="button"
-                onClick={() => toggleTagFilter(tag)}
+                onClick={() => toggleTagFilter(category, tag)}
                 className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
                   active
                     ? "border-sky-300/50 bg-sky-300/20 text-sky-100"
@@ -906,7 +968,7 @@ export default function CategoryPage({
           {tagFilter.length > 0 ? (
             <button
               type="button"
-              onClick={clearTagFilter}
+              onClick={() => clearTagFilter(category)}
               className="rounded-full border border-rose-300/30 bg-rose-300/10 px-2.5 py-1 text-[11px] text-rose-100 transition hover:bg-rose-300/20"
             >
               清除筛选（{tagFilter.length}）
@@ -957,6 +1019,7 @@ export default function CategoryPage({
           <span className="mx-1 h-4 w-px bg-white/15" />
           <input
             value={batchTagInput}
+            list="batch-tag-options"
             onChange={(event) => setBatchTagInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -964,9 +1027,14 @@ export default function CategoryPage({
                 void applyBatchTag();
               }
             }}
-            placeholder="标签名"
-            className="w-28 rounded-full border border-white/16 bg-black/25 px-3 py-1 text-[11px] text-white outline-none placeholder:text-white/25 focus:border-sky-300/50"
+            placeholder="标签名 / 可下拉选已有"
+            className="w-36 rounded-full border border-white/16 bg-black/25 px-3 py-1 text-[11px] text-white outline-none placeholder:text-white/25 focus:border-sky-300/50"
           />
+          <datalist id="batch-tag-options">
+            {allTags.map((tag) => (
+              <option key={tag} value={tag} />
+            ))}
+          </datalist>
           <button
             type="button"
             disabled={batchBusy || !batchTagInput.trim() || batchSelection.length === 0}
@@ -975,6 +1043,19 @@ export default function CategoryPage({
           >
             加标签
           </button>
+          {batchTagPool.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              disabled={batchBusy}
+              onClick={() => void applyBatchRemoveTag(tag)}
+              title={`从选中条目移除「${tag}」`}
+              className="inline-flex items-center gap-1 rounded-full border border-rose-300/28 bg-rose-300/10 px-2 py-1 text-[10px] text-rose-100/85 transition hover:bg-rose-300/22 disabled:opacity-40"
+            >
+              {tag}
+              <X className="h-2.5 w-2.5" />
+            </button>
+          ))}
           <button
             type="button"
             disabled={batchBusy || batchSelection.length === 0}
@@ -1160,7 +1241,9 @@ export default function CategoryPage({
                 videoMuted={videoMuted}
                 videoSoundMode={videoSoundMode}
                 videoFitMode={videoFitMode}
-                showInfo={isVideoCategory ? videoShowInfo : true}
+                infoMode={
+                  cardInfoMode === "hidden" || (isVideoCategory && !videoShowInfo) ? "hidden" : cardInfoMode
+                }
                 favorite={favoriteIds.includes(`${category}/${item.id}`)}
                 selected={selectedModeActive && selectedVideoIds.includes(item.id)}
                 batchSelected={batchMode && batchSelection.includes(item.id)}
