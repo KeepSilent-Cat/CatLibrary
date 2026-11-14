@@ -1,12 +1,13 @@
 import PersistentMusic from "./PersistentMusic";
-import { BookOpen, BookText, Camera, Gamepad2, House, ImageIcon, LayoutGrid, Loader2, Music, Newspaper, PlaySquare, Settings2, Sparkles, Star } from "lucide-react";
-import { Suspense, useEffect, useRef } from "react";
+import { BookOpen, BookText, Camera, Gamepad2, House, ImageIcon, LayoutGrid, Loader2, Music, Newspaper, PlaySquare, Search, Settings2, Sparkles, Star } from "lucide-react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import zeroCatLogo from "@/assets/zerocat-icon-max.png";
 import { cn } from "@/lib/utils";
 import ScreenshotOverlay from "@/components/ScreenshotOverlay";
 import WindowDragBar from "@/components/WindowDragBar";
 import WindowControls from "@/components/WindowControls";
+import GlobalSearch from "@/components/GlobalSearch";
 import { useAppStore } from "@/store/useAppStore";
 
 /** 判断键盘事件是否匹配快捷键字符串，如 "ctrl+shift+s" */
@@ -103,10 +104,23 @@ export default function AppShell() {
   const ratingFilter=useAppStore(s=>s.ratingFilter);
   const wallpaper = useAppStore((state) => state.wallpaper);
   const toastTimerRef = useRef<number | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
 
   // 全局快捷键触发截图
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // Ctrl/Cmd + K：全局搜索
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openSearch();
+        return;
+      }
+      if (event.key === "Escape" && searchOpen) {
+        closeSearch();
+        return;
+      }
       if (screenshotOpen) {
         return;
       }
@@ -117,7 +131,7 @@ export default function AppShell() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [screenshotShortcut, screenshotOpen, openScreenshot]);
+  }, [screenshotShortcut, screenshotOpen, openScreenshot, openSearch, closeSearch, searchOpen]);
 
   // 保存成功提示自动消失
   useEffect(() => {
@@ -167,6 +181,15 @@ export default function AppShell() {
             )}
             <button
               type="button"
+              onClick={openSearch}
+              title="全局搜索（Ctrl+K）"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/16 bg-white/8 px-3 py-1.5 text-xs text-white/78 transition hover:bg-white/16 hover:text-white"
+            >
+              <Search className="h-3.5 w-3.5" />
+              搜索
+            </button>
+            <button
+              type="button"
               onClick={openScreenshot}
               title={`截图（${formatShortcut(screenshotShortcut)}）`}
               className="inline-flex items-center gap-1.5 rounded-full border border-white/16 bg-white/8 px-3 py-1.5 text-xs text-white/78 transition hover:bg-white/16 hover:text-white"
@@ -205,6 +228,7 @@ export default function AppShell() {
 
       <PersistentMusic />
       <ScreenshotOverlay />
+      <GlobalSearch open={searchOpen} onClose={closeSearch} />
     </div>
   );
 }
