@@ -897,6 +897,19 @@ export default function CategoryPage({
             ) : null}
             <button
               type="button"
+              onClick={() => {
+                clearLibraryIndexCache(resourceRoot);
+                setRefreshKey((key) => key + 1);
+                setSavedToast("已重新扫描素材库");
+              }}
+              title="重新扫描素材库（删除或外部改动后可用）"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/16 bg-white/8 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/16"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              刷新
+            </button>
+            <button
+              type="button"
               onClick={() => (batchMode ? exitBatchMode() : setBatchMode(true))}
               title="批量整理：多选后统一改分级 / 加标签 / 设封面 / 删除"
               className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition ${

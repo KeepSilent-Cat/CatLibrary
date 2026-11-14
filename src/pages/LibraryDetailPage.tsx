@@ -308,6 +308,8 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
         tagDraft,
         altNameDraft,
       );
+      // 标题/标签变了，列表索引也要失效，否则返回列表还是旧标题
+      clearLibraryIndexCache(resourceRoot);
       setItems((currentItems) =>
         currentItems.map((item) =>
           item.id === currentItem.id
@@ -347,6 +349,8 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
         category,
         itemId: currentItem.id,
       });
+      // 删除后必须清掉索引缓存，否则回到列表还会看到这个已消失的条目
+      clearLibraryIndexCache(resourceRoot);
       navigate(`/${category}`);
     } catch (currentError) {
       setDeleteError(currentError instanceof Error ? currentError.message : "删除失败");

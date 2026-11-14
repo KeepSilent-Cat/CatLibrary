@@ -726,6 +726,8 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
         category,
         itemId,
       });
+      // 删除条目后清缓存，避免列表里残留一个没有图片的空卡片
+      clearLibraryIndexCache(resourceRoot);
       navigate(`/${category}`);
     } catch (currentError) {
       setSaveError(currentError instanceof Error ? currentError.message : String(currentError));
@@ -740,6 +742,7 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
     setSaving(true);
     setSaveError(null);
     try {
+      clearLibraryIndexCache(resourceRoot);
       await invoke("extract_comic_chapter", {
         resourceRoot,
         groupId: itemId,
@@ -775,6 +778,7 @@ export default function ComicReaderPage({ category = "comics" }: { category?: "c
     setSaving(true);
     setSaveError(null);
     try {
+      clearLibraryIndexCache(resourceRoot);
       await invoke("delete_comic_chapter", {
         resourceRoot,
         groupId: itemId,
