@@ -412,12 +412,31 @@ fn status_text(status: u16) -> &'static str {
 /* ---------------- 业务 ---------------- */
 
 fn category_files(root: &Path, category: &str, item_id: &str) -> Vec<PathBuf> {
-  let dir = match category {
-    "images" | "screenshots" => root.join(category).join(item_id).join("source"),
-    "videos" => root.join(category).join(item_id).join("source"),
-    _ => root.join(category).join(item_id).join("source"),
-  };
+  let dir = root.join(category).join(item_id).join("source");
+  if category == "comics" {
+    // 漫画是 source/ch01、ch02… 的多层结构，按路径排序即为阅读顺序
+    return list_files_recursive(&dir);
+  }
   list_source_files(&dir)
+}
+
+/// 递归列出目录下所有文件，按完整路径排序（保证 ch01 → ch02 → … 的顺序）
+fn list_files_recursive(dir: &Path) -> Vec<PathBuf> {
+  fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if path.is_dir() {
+        walk(&path, out);
+      } else if path.is_file() {
+        out.push(path);
+      }
+    }
+  }
+  let mut files = Vec::new();
+  walk(dir, &mut files);
+  files.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
+  files
 }
 
 fn pick_cover(root: &Path, category: &str, item_id: &str) -> Option<PathBuf> {
@@ -497,7 +516,7 @@ fn build_index(root: &Path, app: &tauri::AppHandle) -> Result<String, String> {
   let metadata = load_library_metadata(app, root)?;
   let mut items: Vec<MobileItem> = Vec::new();
 
-  for category in ["screenshots", "images", "videos"] {
+  for category in ["screenshots", "images", "videos", "comics"] {
     let dir = root.join(category);
     let Ok(entries) = fs::read_dir(&dir) else { continue };
     for entry in entries.flatten() {

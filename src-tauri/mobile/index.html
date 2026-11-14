@@ -211,7 +211,7 @@
             title.textContent = item.title;
             var sub = document.createElement('div');
             sub.className = 'sub';
-            sub.textContent = item.count + ' 项';
+            sub.textContent = (item.category === 'comics' ? item.count + ' 页' : item.count + ' 项');
             meta.appendChild(title);
             meta.appendChild(sub);
             card.appendChild(meta);
@@ -284,6 +284,7 @@
           { key: 'all', label: '全部' },
           { key: 'images', label: '图片' },
           { key: 'videos', label: '视频' },
+          { key: 'comics', label: '漫画' },
           { key: 'screenshots', label: '截图' }
         ];
         cats.forEach(function (cat) {
