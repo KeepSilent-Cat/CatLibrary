@@ -1,6 +1,6 @@
 import ContentUnlockDialog from "@/components/ContentUnlockDialog";
 import LibraryBackupCard from "@/components/LibraryBackupCard";
-import { Camera, Eye, EyeOff, FolderTree, ImagePlus, Keyboard, ShieldAlert, ToggleLeft, ToggleRight, Wallpaper } from "lucide-react";
+import { Camera, Copy, Eye, EyeOff, FolderTree, ImagePlus, Keyboard, ShieldAlert, Smartphone, ToggleLeft, ToggleRight, Wallpaper } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { clearLibraryIndexCache } from "@/lib/library-source";
@@ -12,6 +12,7 @@ import type {
 } from "@/data/library";
 import { formatShortcut } from "@/components/AppShell";
 import { useAppStore } from "@/store/useAppStore";
+import { mobileAccessStatus, startMobileAccess, stopMobileAccess, type MobileAccessInfo } from "@/lib/mobile-access";
 
 const previewModeOptions: Array<{ value: PreviewMode; label: string; description: string }> = [
   { value: "hover", label: "悬停触发", description: "默认静止，鼠标悬停时才开始预览。" },
@@ -42,6 +43,17 @@ export default function Settings() {
 
 
   const [unlockTarget,setUnlockTarget]=useState<0|1|2|null>(null);
+  const [mobileInfo, setMobileInfo] = useState<MobileAccessInfo | null>(null);
+  const [mobileBusy, setMobileBusy] = useState(false);
+  const [mobileError, setMobileError] = useState<string | null>(null);
+
+  // 手机访问：启动/停止内网只读服务（进程内状态，重启应用即失效）
+  useEffect(() => {
+    // 测试环境里 invoke 可能返回 undefined，这里统一包一层 Promise，避免读 .then 崩溃
+    Promise.resolve(mobileAccessStatus())
+      .then((value) => setMobileInfo(value ?? null))
+      .catch(() => setMobileInfo(null));
+  }, []);
 
 
   const {
@@ -359,6 +371,95 @@ export default function Settings() {
 
         <aside className="space-y-6">
         <section className="glass-panel rounded-[32px] p-6">
+          <div className="flex items-center gap-2">
+            <Smartphone className="h-4 w-4 text-sky-200" />
+            <h2 className="text-xl font-semibold text-white">手机访问</h2>
+          </div>
+          <p className="mt-2 text-xs leading-6 text-white/45">
+            用手机浏览器在自己家 WiFi 里翻这个库，资源不复制、不经过任何服务器。
+            服务只监听内网地址、只读访问，关掉即刻断开。
+          </p>
+
+          {mobileInfo ? (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-[14px] border border-white/12 bg-black/25 px-3 py-2.5">
+                <p className="text-[11px] text-white/40">手机浏览器打开这个地址</p>
+                <p className="mt-1 break-all font-mono text-xs text-sky-100">{mobileInfo.url}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(mobileInfo.url);
+                    setSavedToast("地址已复制");
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/16 bg-white/8 px-3 py-1.5 text-xs text-white/76 transition hover:bg-white/16"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  复制地址
+                </button>
+                <button
+                  type="button"
+                  disabled={mobileBusy}
+                  onClick={async () => {
+                    setMobileBusy(true);
+                    try {
+                      await stopMobileAccess();
+                      setMobileInfo(null);
+                      setSavedToast("已停止手机访问");
+                    } catch (currentError) {
+                      setMobileError(String(currentError));
+                    } finally {
+                      setMobileBusy(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/30 bg-rose-300/10 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-300/20 disabled:opacity-40"
+                >
+                  停止访问
+                </button>
+                <span className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2.5 py-1 text-[10px] text-emerald-100/85">
+                  仅内网 · 只读
+                </span>
+              </div>
+              <p className="text-[11px] leading-5 text-white/35">
+                手机和电脑要连同一个 WiFi。停止或重启应用后，这个地址立即失效，需要重新开启。
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <button
+                type="button"
+                disabled={mobileBusy}
+                onClick={async () => {
+                  setMobileBusy(true);
+                  setMobileError(null);
+                  try {
+                    const info = await startMobileAccess(resourceRoot);
+                    setMobileInfo(info);
+                    setSavedToast("手机访问已开启");
+                  } catch (currentError) {
+                    setMobileError(String(currentError));
+                  } finally {
+                    setMobileBusy(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-sky-300/45 bg-sky-300/20 px-4 py-2 text-xs font-medium text-sky-50 transition hover:bg-sky-300/30 disabled:opacity-40"
+              >
+                <Smartphone className="h-3.5 w-3.5" />
+                {mobileBusy ? "正在开启…" : "开启手机访问"}
+              </button>
+              <p className="text-[11px] leading-5 text-white/35">
+                开启后会生成一个带令牌的内网地址，只有拿到这个地址的设备才能访问。
+              </p>
+            </div>
+          )}
+
+          {mobileError ? (
+            <p className="mt-2 text-[11px] leading-5 text-rose-200">{mobileError}</p>
+          ) : null}
+        </section>
+
+        <section className="glass-panel rounded-[32px] p-6">
           <h2 className="text-xl font-semibold text-white">路径策略</h2>
           <p className="mt-2 text-sm leading-6 text-white/68">
             当前先只定方向：让应用跟着目录结构走，而不是锁死在某一台电脑上。
@@ -420,7 +521,9 @@ export default function Settings() {
             </ul>
           </div>
         </section>
-        <LibraryBackupCard/>
+  
+
+      <LibraryBackupCard/>
         </aside>
       </div>
     </div>

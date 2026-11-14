@@ -11,13 +11,15 @@ use std::{
 };
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
+mod mobile_server;
+
+pub(crate) const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
 /// 列表卡片缩略图的最长边（像素）。卡片只有几百像素宽，列表页改加载这个尺寸，
 /// 避免放大窗口/全屏时几十张卡片同时解码原始大图造成的卡顿。
 const THUMBNAIL_MAX_SIZE: u32 = 480;
 /// 缩略图磁盘缓存目录名（放在应用数据目录，不污染用户的素材库）
 const THUMBNAIL_DIR_NAME: &str = "thumbnails";
-const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "mov", "webm", "wmv", "m4v"];
+pub(crate) const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "mov", "webm", "wmv", "m4v"];
 const GAME_FILE_EXTENSIONS: &[&str] = &["exe", "apk", "zip", "rar", "7z", "001", "iso"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma"];
 /// 小说可导入的文件：纯文本为主，epub 只做列出（不解析）
@@ -89,7 +91,7 @@ struct LibraryMetadataEntry {
 }
 
 /// 从 metadata 解析内容分级：rating 优先，adult 兜底（true→2）
-fn rating_of(entry: &LibraryMetadataEntry) -> u8 {
+pub(crate) fn rating_of(entry: &LibraryMetadataEntry) -> u8 {
   if let Some(rating) = entry.rating {
     return rating.min(2);
   }
@@ -2399,7 +2401,7 @@ fn scan_group(
   })
 }
 
-fn load_library_metadata(app: &AppHandle, root: &Path) -> Result<HashMap<String, LibraryMetadataEntry>, String> {
+pub(crate) fn load_library_metadata(app: &AppHandle, root: &Path) -> Result<HashMap<String, LibraryMetadataEntry>, String> {
   for metadata_file in metadata_file_candidates(app, root) {
     if !metadata_file.exists() {
       continue;
@@ -3223,7 +3225,7 @@ fn read_modified_timestamp(path: &Path) -> u64 {
     .unwrap_or(0)
 }
 
-fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+pub(crate) fn has_extension(path: &Path, extensions: &[&str]) -> bool {
   path
     .extension()
     .and_then(|value| value.to_str())
@@ -3696,6 +3698,9 @@ pub fn run() {
       extract_comic_chapter,
       delete_comic_chapter,
       delete_library_item,
+      mobile_server::start_mobile_access,
+      mobile_server::stop_mobile_access,
+      mobile_server::mobile_access_status,
       save_page_snapshot,
       capture_screen_instant,
       save_crop_screenshot,

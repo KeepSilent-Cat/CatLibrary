@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#141018" />
+    <title>CatLibrary · 手机浏览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #141018;
+        --panel: rgba(255, 255, 255, 0.06);
+        --line: rgba(255, 255, 255, 0.12);
+        --text: #f3f0f7;
+        --muted: rgba(243, 240, 247, 0.52);
+        --accent: #8fd0ff;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      header {
+        position: sticky; top: 0; z-index: 20;
+        padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+        background: linear-gradient(180deg, rgba(20, 16, 24, 0.98), rgba(20, 16, 24, 0.72));
+        backdrop-filter: blur(14px);
+        border-bottom: 1px solid var(--line);
+      }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .brand { font-size: 13px; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
+      .count { margin-left: auto; font-size: 12px; color: var(--muted); }
+      .search {
+        margin-top: 10px; display: flex; align-items: center; gap: 8px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
+      }
+      .search input {
+        flex: 1; min-width: 0; background: transparent; border: 0; outline: none;
+        color: var(--text); font-size: 15px;
+      }
+      .search input::placeholder { color: rgba(243, 240, 247, 0.3); }
+      .chips { margin-top: 8px; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+      .chips button {
+        flex: 0 0 auto; padding: 6px 12px; border-radius: 999px; font-size: 12px;
+        background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+      }
+      .chips button.on { background: rgba(143, 208, 255, 0.2); border-color: rgba(143, 208, 255, 0.5); color: #eaf6ff; }
+      #grid {
+        display: grid; gap: 10px; padding: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      @media (min-width: 560px) { #grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (min-width: 820px) { #grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+      .card {
+        position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line);
+        background: #1c1722; aspect-ratio: 3 / 4;
+      }
+      .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .card .meta {
+        position: absolute; inset: auto 0 0 0; padding: 8px 9px;
+        background: linear-gradient(180deg, transparent, rgba(10, 8, 14, 0.92));
+      }
+      .card .title {
+        font-size: 12px; line-height: 1.35; font-weight: 600;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .card .sub { margin-top: 3px; font-size: 10px; color: var(--muted); display: flex; gap: 6px; }
+      .badge {
+        position: absolute; top: 7px; left: 7px; font-size: 10px; font-weight: 700;
+        padding: 2px 6px; border-radius: 999px; border: 1px solid rgba(255, 140, 170, 0.5);
+        background: rgba(70, 12, 30, 0.75); color: #ffc9d8;
+      }
+      .badge.r15 { border-color: rgba(255, 208, 140, 0.5); background: rgba(70, 52, 12, 0.75); color: #ffe1a8; }
+      .play {
+        position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px;
+        color: rgba(255, 255, 255, 0.85); text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+      }
+      /* 查看器 */
+      #viewer {
+        position: fixed; inset: 0; z-index: 50; display: none; flex-direction: column;
+        background: rgba(8, 6, 12, 0.98);
+      }
+      #viewer.on { display: flex; }
+      .vbar {
+        display: flex; align-items: center; gap: 10px;
+        padding: calc(env(safe-area-inset-top) + 10px) 14px 8px;
+      }
+      .vbar button {
+        border: 1px solid var(--line); background: var(--panel); color: var(--text);
+        border-radius: 999px; padding: 6px 12px; font-size: 13px;
+      }
+      .vbar .vt { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 6px 10px 14px; }
+      #stage img, #stage video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+      .vnav { display: flex; gap: 10px; padding: 0 14px calc(env(safe-area-inset-bottom) + 14px); }
+      .vnav button {
+        flex: 1; padding: 12px; border-radius: 12px; font-size: 14px;
+        border: 1px solid var(--line); background: var(--panel); color: var(--text);
+      }
+      .vnav button:disabled { opacity: 0.35; }
+      .empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.8; }
+      .loadmore { padding: 18px; text-align: center; }
+      .loadmore button { padding: 10px 20px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row">
+        <span class="brand">CatLibrary</span>
+        <span class="count" id="count">连接中…</span>
+      </div>
+      <div class="search">
+        <span style="opacity: 0.4">🔍</span>
+        <input id="q" type="search" placeholder="搜索标题或标签" autocomplete="off" />
+      </div>
+      <div class="chips" id="chips"></div>
+    </header>
+
+    <main id="grid"></main>
+    <div class="loadmore" id="loadmore" hidden><button id="more">显示更多</button></div>
+
+    <div id="viewer">
+      <div class="vbar">
+        <button id="close">返回</button>
+        <span class="vt" id="vtitle"></span>
+        <span class="vt" id="vpos" style="flex: 0 0 auto; text-align: right"></span>
+      </div>
+      <div id="stage"></div>
+      <div class="vnav">
+        <button id="prev">上一张</button>
+        <button id="next">下一张</button>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var token = '';
+        var params = new URLSearchParams(location.search);
+        if (params.get('t')) {
+          token = params.get('t');
+          try { localStorage.setItem('catlib-token', token); } catch (e) {}
+          history.replaceState(null, '', location.pathname);
+        } else {
+          try { token = localStorage.getItem('catlib-token') || ''; } catch (e) {}
+        }
+
+        var items = [];
+        var filtered = [];
+        var shown = 0;
+        var PAGE = 40;
+        var category = 'all';
+        var keyword = '';
+
+        var grid = document.getElementById('grid');
+        var countEl = document.getElementById('count');
+        var chipsEl = document.getElementById('chips');
+        var loadmore = document.getElementById('loadmore');
+        var moreBtn = document.getElementById('more');
+
+        function q(url) { return url + (url.indexOf('?') >= 0 ? '&' : '?') + 't=' + encodeURIComponent(token); }
+
+        function esc(text) {
+          return String(text || '').replace(/[&<>"]/g, function (ch) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+          });
+        }
+
+        function applyFilter() {
+          var word = keyword.trim().toLowerCase();
+          filtered = items.filter(function (item) {
+            if (category !== 'all' && item.category !== category) return false;
+            if (!word) return true;
+            var hay = (item.title + ' ' + (item.tags || []).join(' ')).toLowerCase();
+            return hay.indexOf(word) >= 0;
+          });
+          shown = 0;
+          grid.innerHTML = '';
+          render();
+        }
+
+        function render() {
+          var slice = filtered.slice(shown, shown + PAGE);
+          slice.forEach(function (item) {
+            var card = document.createElement('a');
+            card.className = 'card';
+            card.href = 'javascript:void 0';
+            var img = document.createElement('img');
+            img.loading = 'lazy';
+            img.src = q('/api/cover?c=' + item.category + '&id=' + encodeURIComponent(item.id));
+            img.alt = item.title;
+            card.appendChild(img);
+            if (item.rating > 0) {
+              var badge = document.createElement('span');
+              badge.className = 'badge' + (item.rating === 1 ? ' r15' : '');
+              badge.textContent = item.rating === 2 ? '18+' : 'R15';
+              card.appendChild(badge);
+            }
+            if (item.hasVideo) {
+              var play = document.createElement('span');
+              play.className = 'play';
+              play.textContent = '▶';
+              card.appendChild(play);
+            }
+            var meta = document.createElement('div');
+            meta.className = 'meta';
+            var title = document.createElement('div');
+            title.className = 'title';
+            title.textContent = item.title;
+            var sub = document.createElement('div');
+            sub.className = 'sub';
+            sub.textContent = item.count + ' 项';
+            meta.appendChild(title);
+            meta.appendChild(sub);
+            card.appendChild(meta);
+            card.addEventListener('click', function () { openItem(item); });
+            grid.appendChild(card);
+          });
+          shown += slice.length;
+          loadmore.hidden = shown >= filtered.length;
+          countEl.textContent = filtered.length + ' 项';
+        }
+
+        moreBtn.addEventListener('click', render);
+
+        /* ------- 查看器 ------- */
+        var viewer = document.getElementById('viewer');
+        var stage = document.getElementById('stage');
+        var vtitle = document.getElementById('vtitle');
+        var vpos = document.getElementById('vpos');
+        var prevBtn = document.getElementById('prev');
+        var nextBtn = document.getElementById('next');
+        var files = [];
+        var cursor = 0;
+        var current = null;
+
+        function openItem(item) {
+          current = item;
+          vtitle.textContent = item.title;
+          viewer.classList.add('on');
+          fetch(q('/api/list?c=' + item.category + '&id=' + encodeURIComponent(item.id)))
+            .then(function (res) { return res.json(); })
+            .then(function (list) { files = list; cursor = 0; showFile(); })
+            .catch(function () { stage.innerHTML = '<div class="empty">读取失败</div>'; });
+        }
+
+        function showFile() {
+          if (!files.length) {
+            stage.innerHTML = '<div class="empty">这个合集还没有可读文件</div>';
+            return;
+          }
+          var file = files[cursor];
+          var url = q('/media?c=' + current.category + '&id=' + encodeURIComponent(current.id) + '&n=' + file.index);
+          stage.innerHTML = '';
+          var node;
+          if (file.isVideo) {
+            node = document.createElement('video');
+            node.controls = true;
+            node.playsInline = true;
+            node.preload = 'metadata';
+            node.src = url;
+          } else {
+            node = document.createElement('img');
+            node.src = url;
+            node.alt = file.name;
+          }
+          stage.appendChild(node);
+          vpos.textContent = (cursor + 1) + ' / ' + files.length;
+          prevBtn.disabled = cursor <= 0;
+          nextBtn.disabled = cursor >= files.length - 1;
+        }
+
+        prevBtn.addEventListener('click', function () { if (cursor > 0) { cursor -= 1; showFile(); } });
+        nextBtn.addEventListener('click', function () { if (cursor < files.length - 1) { cursor += 1; showFile(); } });
+        document.getElementById('close').addEventListener('click', function () {
+          viewer.classList.remove('on');
+          stage.innerHTML = '';
+        });
+
+        /* ------- 初始化 ------- */
+        var cats = [
+          { key: 'all', label: '全部' },
+          { key: 'images', label: '图片' },
+          { key: 'videos', label: '视频' },
+          { key: 'screenshots', label: '截图' }
+        ];
+        cats.forEach(function (cat) {
+          var button = document.createElement('button');
+          button.textContent = cat.label;
+          if (cat.key === 'all') button.className = 'on';
+          button.addEventListener('click', function () {
+            category = cat.key;
+            Array.prototype.forEach.call(chipsEl.children, function (node) { node.className = ''; });
+            button.className = 'on';
+            applyFilter();
+          });
+          chipsEl.appendChild(button);
+        });
+
+        document.getElementById('q').addEventListener('input', function (event) {
+          keyword = event.target.value;
+          applyFilter();
+        });
+
+        if (!token) {
+          grid.innerHTML = '<div class="empty">缺少访问令牌。<br>请在电脑端「设置 → 手机访问」重新启动，再扫同一个地址。</div>';
+          countEl.textContent = '';
+          return;
+        }
+
+        fetch(q('/api/index'))
+          .then(function (res) {
+            if (res.status === 401) throw new Error('token');
+            return res.json();
+          })
+          .then(function (list) {
+            items = list;
+            applyFilter();
+          })
+          .catch(function (error) {
+            grid.innerHTML =
+              '<div class="empty">' +
+              (error && error.message === 'token'
+                ? '访问令牌已失效，请在电脑端重新启动手机访问。'
+                : '连接失败，确认手机和电脑在同一个 WiFi，且电脑上的手机访问已开启。') +
+              '</div>';
+            countEl.textContent = '';
+          });
+      })();
+    </script>
+  </body>
+</html>
