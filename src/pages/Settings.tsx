@@ -6,13 +6,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { clearLibraryIndexCache } from "@/lib/library-source";
 import defaultBg from "@/assets/app-background.webp";
 import type {
+  CategoryKey,
   ImagePreviewBehavior,
   PreviewMode,
   VideoPreviewBehavior,
 } from "@/data/library";
 import { formatShortcut } from "@/components/AppShell";
 import { useAppStore } from "@/store/useAppStore";
-import { mobileAccessStatus, startMobileAccess, stopMobileAccess, type MobileAccessInfo } from "@/lib/mobile-access";
+import { mobileAccessStatus, startMobileAccess, stopMobileAccess, updateMobileFilter, type MobileAccessInfo } from "@/lib/mobile-access";
+import { loadLibraryIndex } from "@/lib/library-source";
 
 const previewModeOptions: Array<{ value: PreviewMode; label: string; description: string }> = [
   { value: "hover", label: "悬停触发", description: "默认静止，鼠标悬停时才开始预览。" },
@@ -47,6 +49,7 @@ export default function Settings() {
   const [mobileBusy, setMobileBusy] = useState(false);
   const [mobileError, setMobileError] = useState<string | null>(null);
 
+
   // 手机访问：启动/停止内网只读服务（进程内状态，重启应用即失效）
   useEffect(() => {
     // 测试环境里 invoke 可能返回 undefined，这里统一包一层 Promise，避免读 .then 崩溃
@@ -78,6 +81,39 @@ export default function Settings() {
     resetWallpaper,
     setSavedToast,
   } = useAppStore();
+
+  const extraRatings = useAppStore((state) => state.extraRatings);
+
+  /** 汇总「条目分级」与「报道分级」，交给手机端做同一套过滤 */
+  const buildRatingMaps = async () => {
+    const index = await loadLibraryIndex(resourceRoot);
+    const itemRatings: Record<string, number> = {};
+    for (const key of Object.keys(index) as CategoryKey[]) {
+      for (const entry of index[key]) {
+        itemRatings[`${key}/${entry.id}`] = entry.rating;
+      }
+    }
+    const reportRatings: Record<string, number> = {};
+    for (const [key, value] of Object.entries(extraRatings)) {
+      if (key.startsWith("reports/")) {
+        reportRatings[key.slice("reports/".length)] = value;
+      }
+    }
+    return { itemRatings, reportRatings };
+  };
+
+  // 桌面端切了显示范围 → 手机端立即同步
+  useEffect(() => {
+    if (!mobileInfo) {
+      return;
+    }
+    void buildRatingMaps()
+      .then(({ itemRatings, reportRatings }) =>
+        updateMobileFilter(ratingFilter, itemRatings, reportRatings),
+      )
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileInfo, ratingFilter, extraRatings]);
 
   // 快捷键录制：点击"录制"后监听下一次按键组合
   const [recordingKey, setRecordingKey] = useState(false);
@@ -434,7 +470,13 @@ export default function Settings() {
                   setMobileBusy(true);
                   setMobileError(null);
                   try {
-                    const info = await startMobileAccess(resourceRoot);
+                    const maps = await buildRatingMaps();
+                  const info = await startMobileAccess(
+                    resourceRoot,
+                    ratingFilter,
+                    maps.itemRatings,
+                    maps.reportRatings,
+                  );
                     setMobileInfo(info);
                     setSavedToast("手机访问已开启");
                   } catch (currentError) {

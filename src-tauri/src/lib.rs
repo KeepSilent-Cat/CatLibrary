@@ -3710,6 +3710,7 @@ pub fn run() {
       load_video_danmaku,
       load_video_subtitle,
       mobile_server::start_mobile_access,
+      mobile_server::update_mobile_filter,
       mobile_server::stop_mobile_access,
       mobile_server::mobile_access_status,
       save_page_snapshot,

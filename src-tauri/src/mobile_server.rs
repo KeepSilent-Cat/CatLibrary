@@ -7,6 +7,7 @@
 //! - 不做目录列表遍历：只能按「分类 + 合集 id」取内容，路径做越界校验
 //! - 不写访问日志
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -57,6 +58,63 @@ struct Running {
 
 static RUNNING: OnceLock<Mutex<Option<Running>>> = OnceLock::new();
 
+/// 手机端跟随桌面端的显示范围：分级上限 + 每篇报道的分级
+#[derive(Clone, Default)]
+struct FilterState {
+  rating: u8,
+  /// "分类/条目id" → 分级
+  items: HashMap<String, u8>,
+  reports: HashMap<String, u8>,
+}
+
+static FILTER: OnceLock<Mutex<FilterState>> = OnceLock::new();
+
+fn filter_state() -> &'static Mutex<FilterState> {
+  FILTER.get_or_init(|| Mutex::new(FilterState::default()))
+}
+
+fn current_filter() -> FilterState {
+  filter_state().lock().map(|guard| guard.clone()).unwrap_or_default()
+}
+
+fn set_filter(rating: u8, items: HashMap<String, u8>, reports: HashMap<String, u8>) {
+  if let Ok(mut guard) = filter_state().lock() {
+    guard.rating = rating;
+    guard.items = items;
+    guard.reports = reports;
+  }
+}
+
+/// 当前访问者能不能看这个条目
+fn item_allowed(filter: &FilterState, category: &str, item_id: &str) -> bool {
+  let rating = filter
+    .items
+    .get(&format!("{category}/{item_id}"))
+    .copied()
+    .unwrap_or(0);
+  rating <= filter.rating
+}
+
+/// 路径是否位于允许访问的条目目录内（/file 与 /thumb 用）
+fn path_allowed(filter: &FilterState, root: &Path, path: &Path) -> bool {
+  let Ok(relative) = path.strip_prefix(root) else {
+    return false;
+  };
+  let parts: Vec<&str> = relative
+    .components()
+    .filter_map(|part| part.as_os_str().to_str())
+    .collect();
+  if parts.len() < 2 {
+    return false;
+  }
+  let category = parts[0];
+  let id = parts[1];
+  if category == "reports" {
+    return filter.reports.get(id).copied().unwrap_or(2) <= filter.rating;
+  }
+  item_allowed(filter, category, id)
+}
+
 fn running() -> &'static Mutex<Option<Running>> {
   RUNNING.get_or_init(|| Mutex::new(None))
 }
@@ -105,7 +163,14 @@ fn make_token() -> String {
   digest[..16].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-pub fn start(app: tauri::AppHandle, resource_root: String) -> Result<MobileAccessInfo, String> {
+pub fn start(
+  app: tauri::AppHandle,
+  resource_root: String,
+  rating_filter: u8,
+  item_ratings: HashMap<String, u8>,
+  report_ratings: HashMap<String, u8>,
+) -> Result<MobileAccessInfo, String> {
+  set_filter(rating_filter.min(2), item_ratings, report_ratings);
   let mut guard = running().lock().map_err(|_| "手机访问状态异常".to_string())?;
   if let Some(current) = guard.as_ref() {
     return Ok(current.info.clone());
@@ -181,8 +246,31 @@ pub fn status() -> Option<MobileAccessInfo> {
 pub fn start_mobile_access(
   app: tauri::AppHandle,
   resource_root: String,
+  rating_filter: u8,
+  item_ratings: Option<HashMap<String, u8>>,
+  report_ratings: Option<HashMap<String, u8>>,
 ) -> Result<MobileAccessInfo, String> {
-  start(app, resource_root)
+  start(
+    app,
+    resource_root,
+    rating_filter,
+    item_ratings.unwrap_or_default(),
+    report_ratings.unwrap_or_default(),
+  )
+}
+
+/// 桌面端改了显示范围/报道分级后，手机上立即生效
+#[tauri::command]
+pub fn update_mobile_filter(
+  rating_filter: u8,
+  item_ratings: Option<HashMap<String, u8>>,
+  report_ratings: Option<HashMap<String, u8>>,
+) {
+  set_filter(
+    rating_filter.min(2),
+    item_ratings.unwrap_or_default(),
+    report_ratings.unwrap_or_default(),
+  );
 }
 
 #[tauri::command]
@@ -259,18 +347,42 @@ fn handle_connection(
     return respond_text(&mut stream, 401, "token 无效，请重新扫码或在电脑上重新启动手机访问");
   }
 
+  // 手机端跟随桌面端的显示范围：越级内容直接当不存在
+  let filter = current_filter();
+  let requested_category = query_value(&request.query, "c");
+  let requested_id = query_value(&request.query, "id");
+  if let (Some(category), Some(id)) = (requested_category.as_deref(), requested_id.as_deref()) {
+    if !item_allowed(&filter, category, id) {
+      return respond_text(&mut stream, 404, "该内容不在当前显示范围");
+    }
+  }
+  if request.path == "/api/report" {
+    if let Some(id) = requested_id.as_deref() {
+      let rating = filter.reports.get(id).copied().unwrap_or(2);
+      if rating > filter.rating {
+        return respond_text(&mut stream, 404, "该报道不在当前显示范围");
+      }
+    }
+  }
+
   match request.path.as_str() {
     "/ping" => respond_bytes(&mut stream, 200, "text/plain; charset=utf-8", b"ok", None),
-    "/api/index" => match app.ok_or("服务未就绪".to_string()).and_then(|handle| build_index(root, handle)) {
-      Ok(json) => respond_bytes(
-        &mut stream,
-        200,
-        "application/json; charset=utf-8",
-        json.as_bytes(),
-        None,
-      ),
-      Err(error) => respond_text(&mut stream, 500, &error),
-    },
+    "/api/index" => {
+      let filter = current_filter();
+      match app
+        .ok_or("服务未就绪".to_string())
+        .and_then(|handle| build_index(root, handle, &filter))
+      {
+        Ok(json) => respond_bytes(
+          &mut stream,
+          200,
+          "application/json; charset=utf-8",
+          json.as_bytes(),
+          None,
+        ),
+        Err(error) => respond_text(&mut stream, 500, &error),
+      }
+    }
     "/api/cover" => match serve_cover(root, &request.query) {
       Ok(bytes) => respond_bytes(&mut stream, 200, "image/jpeg", &bytes, None),
       Err(error) => respond_text(&mut stream, 404, &error),
@@ -286,8 +398,8 @@ fn handle_connection(
       Err(error) => respond_text(&mut stream, 400, &error),
     },
     "/media" => serve_media(&mut stream, root, &request),
-    "/file" => serve_arbitrary(&mut stream, root, &request),
-    "/thumb" => serve_any_thumb(&mut stream, root, &request),
+    "/file" => serve_arbitrary(&mut stream, root, &request, &filter),
+    "/thumb" => serve_any_thumb(&mut stream, root, &request, &filter),
     "/api/report" => serve_report_json(&mut stream, root, &request, token),
     "/api/novel" => serve_novel_text(&mut stream, root, &request),
     _ => respond_text(&mut stream, 404, "not found"),
@@ -520,7 +632,7 @@ struct MobileItem {
   kind: String,
 }
 
-fn build_index(root: &Path, app: &tauri::AppHandle) -> Result<String, String> {
+fn build_index(root: &Path, app: &tauri::AppHandle, filter: &FilterState) -> Result<String, String> {
   let metadata = load_library_metadata(app, root)?;
   let mut items: Vec<MobileItem> = Vec::new();
 
@@ -542,6 +654,9 @@ fn build_index(root: &Path, app: &tauri::AppHandle) -> Result<String, String> {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| id.clone());
       let rating = entry_meta.map(rating_of).unwrap_or(0);
+      if rating > filter.rating {
+        continue;
+      }
       let tags = entry_meta.and_then(|value| value.tags.clone()).unwrap_or_default();
       let files = category_files(root, category, &id);
       let has_video = files.iter().any(|file| has_extension(file, VIDEO_EXTENSIONS));
@@ -604,12 +719,17 @@ fn build_index(root: &Path, app: &tauri::AppHandle) -> Result<String, String> {
         }
       }
 
+      let report_rating = filter.reports.get(&id).copied().unwrap_or(2);
+      if report_rating > filter.rating {
+        continue;
+      }
+
       items.push(MobileItem {
         key: format!("reports/{id}"),
         category: "reports".to_string(),
         id,
         title,
-        rating: 2,
+        rating: report_rating,
         count: block_count,
         tags: Vec::new(),
         has_video: false,
@@ -990,24 +1110,38 @@ fn decode_text(bytes: &[u8]) -> String {
 }
 
 /// 任意文件（报道里的图片/视频），支持 Range
-fn serve_arbitrary(stream: &mut TcpStream, root: &Path, request: &Request) -> std::io::Result<()> {
+fn serve_arbitrary(
+  stream: &mut TcpStream,
+  root: &Path,
+  request: &Request,
+  filter: &FilterState,
+) -> std::io::Result<()> {
   let Some(raw) = query_value(&request.query, "p") else {
     return respond_text(stream, 400, "缺少路径");
   };
   match resolve_inside_root(root, &raw) {
-    Ok(path) => serve_file(stream, &path, request.range),
+    Ok(path) if path_allowed(filter, root, &path) => serve_file(stream, &path, request.range),
+    Ok(_) => respond_text(stream, 404, "该内容不在当前显示范围"),
     Err(error) => respond_text(stream, 404, &error),
   }
 }
 
 /// 任意图片的缩略图（用于报道封面）
-fn serve_any_thumb(stream: &mut TcpStream, root: &Path, request: &Request) -> std::io::Result<()> {
+fn serve_any_thumb(
+  stream: &mut TcpStream,
+  root: &Path,
+  request: &Request,
+  filter: &FilterState,
+) -> std::io::Result<()> {
   let Some(raw) = query_value(&request.query, "p") else {
     return respond_text(stream, 400, "缺少路径");
   };
   let Ok(path) = resolve_inside_root(root, &raw) else {
     return respond_text(stream, 404, "文件不存在");
   };
+  if !path_allowed(filter, root, &path) {
+    return respond_text(stream, 404, "该内容不在当前显示范围");
+  }
   match thumbnail_for(root, &path) {
     Ok(bytes) => respond_bytes(stream, 200, "image/jpeg", &bytes, None),
     Err(error) => respond_text(stream, 500, &error),

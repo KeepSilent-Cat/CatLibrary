@@ -14,9 +14,28 @@ export function mobileAccessStatus() {
   return invoke<MobileAccessInfo | null>("mobile_access_status");
 }
 
-/** 启动内网只读服务（只监听内网地址） */
-export function startMobileAccess(resourceRoot: string) {
-  return invoke<MobileAccessInfo>("start_mobile_access", { resourceRoot });
+/** 启动内网只读服务（带当前显示范围，手机端跟随桌面端分级） */
+export function startMobileAccess(
+  resourceRoot: string,
+  ratingFilter: number,
+  itemRatings: Record<string, number>,
+  reportRatings: Record<string, number>,
+) {
+  return invoke<MobileAccessInfo>("start_mobile_access", {
+    resourceRoot,
+    ratingFilter,
+    itemRatings,
+    reportRatings,
+  });
+}
+
+/** 桌面端改了显示范围后，推给手机端立即生效 */
+export function updateMobileFilter(
+  ratingFilter: number,
+  itemRatings: Record<string, number>,
+  reportRatings: Record<string, number>,
+) {
+  return invoke<void>("update_mobile_filter", { ratingFilter, itemRatings, reportRatings });
 }
 
 /** 停止服务，token 立即失效 */
