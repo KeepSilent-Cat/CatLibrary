@@ -15,7 +15,6 @@
         --line: rgba(255, 255, 255, 0.12);
         --text: #f3f0f7;
         --muted: rgba(243, 240, 247, 0.52);
-        --accent: #8fd0ff;
       }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
@@ -74,26 +73,28 @@
         background: rgba(70, 12, 30, 0.75); color: #ffc9d8;
       }
       .badge.r15 { border-color: rgba(255, 208, 140, 0.5); background: rgba(70, 52, 12, 0.75); color: #ffe1a8; }
+      .kindtag {
+        position: absolute; top: 7px; right: 7px; font-size: 10px; padding: 2px 6px; border-radius: 999px;
+        border: 1px solid var(--line); background: rgba(10, 8, 14, 0.7); color: var(--muted);
+      }
       .play {
         position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px;
         color: rgba(255, 255, 255, 0.85); text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
       }
       /* 查看器 */
-      #viewer {
-        position: fixed; inset: 0; z-index: 50; display: none; flex-direction: column;
-        background: rgba(8, 6, 12, 0.98);
-      }
+      #viewer { position: fixed; inset: 0; z-index: 50; display: none; flex-direction: column; background: rgba(8, 6, 12, 0.98); }
       #viewer.on { display: flex; }
       .vbar {
-        display: flex; align-items: center; gap: 10px;
+        display: flex; align-items: center; gap: 8px;
         padding: calc(env(safe-area-inset-top) + 10px) 14px 8px;
       }
       .vbar button {
         border: 1px solid var(--line); background: var(--panel); color: var(--text);
         border-radius: 999px; padding: 6px 12px; font-size: 13px;
       }
+      .vbar button.on { background: rgba(143, 208, 255, 0.22); border-color: rgba(143, 208, 255, 0.5); }
       .vbar .vt { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      #stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 6px 10px 14px; }
+      #stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 6px 10px 14px; overflow: auto; }
       #stage img, #stage video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
       .vnav { display: flex; gap: 10px; padding: 0 14px calc(env(safe-area-inset-bottom) + 14px); }
       .vnav button {
@@ -101,6 +102,26 @@
         border: 1px solid var(--line); background: var(--panel); color: var(--text);
       }
       .vnav button:disabled { opacity: 0.35; }
+      /* 滚动阅读 */
+      .scrollwrap { width: 100%; padding: 0 8px 30px; display: flex; flex-direction: column; gap: 6px; }
+      .scrollwrap img { width: 100%; height: auto; border-radius: 4px; }
+      /* 小说 */
+      .novel { padding: 18px 20px 40px; max-width: 720px; margin: 0 auto; }
+      .novel h2 { font-size: 16px; margin: 0 0 12px; color: #dbeafe; }
+      .novel p { font-size: 15px; line-height: 1.95; margin: 0 0 14px; color: #e6e2ee; white-space: pre-wrap; }
+      .novelbar { display: flex; gap: 8px; padding: 8px 16px; }
+      .novelbar select {
+        flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line);
+        color: var(--text); border-radius: 10px; padding: 8px 10px; font-size: 13px;
+      }
+      /* 报道 */
+      .report { padding: 18px 18px 48px; max-width: 760px; margin: 0 auto; }
+      .report h1 { font-size: 20px; line-height: 1.45; margin: 0 0 14px; }
+      .report h2 { font-size: 16px; margin: 22px 0 10px; color: #dbeafe; }
+      .report p { font-size: 15px; line-height: 1.9; margin: 0 0 14px; color: #e6e2ee; white-space: pre-wrap; }
+      .report blockquote { margin: 0 0 14px; padding: 8px 12px; border-left: 3px solid rgba(143, 208, 255, 0.5); color: var(--muted); font-size: 13px; }
+      .report img, .report video { width: 100%; height: auto; border-radius: 10px; margin: 0 0 14px; display: block; }
+      .report hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
       .empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.8; }
       .loadmore { padding: 18px; text-align: center; }
       .loadmore button { padding: 10px 20px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
@@ -126,10 +147,12 @@
       <div class="vbar">
         <button id="close">返回</button>
         <span class="vt" id="vtitle"></span>
+        <button id="modeToggle" hidden>滚动</button>
         <span class="vt" id="vpos" style="flex: 0 0 auto; text-align: right"></span>
       </div>
+      <div id="novelbar" class="novelbar" hidden><select id="chapterSelect"></select></div>
       <div id="stage"></div>
-      <div class="vnav">
+      <div class="vnav" id="pager">
         <button id="prev">上一张</button>
         <button id="next">下一张</button>
       </div>
@@ -147,13 +170,8 @@
           try { token = localStorage.getItem('catlib-token') || ''; } catch (e) {}
         }
 
-        var items = [];
-        var filtered = [];
-        var shown = 0;
-        var PAGE = 40;
-        var category = 'all';
-        var keyword = '';
-
+        var items = [], filtered = [], shown = 0, PAGE = 40;
+        var category = 'all', keyword = '';
         var grid = document.getElementById('grid');
         var countEl = document.getElementById('count');
         var chipsEl = document.getElementById('chips');
@@ -161,24 +179,26 @@
         var moreBtn = document.getElementById('more');
 
         function q(url) { return url + (url.indexOf('?') >= 0 ? '&' : '?') + 't=' + encodeURIComponent(token); }
+        function esc(t) { return String(t || '').replace(/[&<>"]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
 
-        function esc(text) {
-          return String(text || '').replace(/[&<>"]/g, function (ch) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
-          });
-        }
+        var KIND_LABEL = {
+          images: '图片', videos: '视频', comics: '漫画', novels: '小说',
+          reports: '报道', screenshots: '截图',
+        };
 
         function applyFilter() {
           var word = keyword.trim().toLowerCase();
           filtered = items.filter(function (item) {
             if (category !== 'all' && item.category !== category) return false;
             if (!word) return true;
-            var hay = (item.title + ' ' + (item.tags || []).join(' ')).toLowerCase();
-            return hay.indexOf(word) >= 0;
+            return (item.title + ' ' + (item.tags || []).join(' ')).toLowerCase().indexOf(word) >= 0;
           });
-          shown = 0;
-          grid.innerHTML = '';
-          render();
+          shown = 0; grid.innerHTML = ''; render();
+        }
+
+        function coverOf(item) {
+          if (item.category === 'reports' && item.coverUrl) return q(item.coverUrl);
+          return q('/api/cover?c=' + item.category + '&id=' + encodeURIComponent(item.id));
         }
 
         function render() {
@@ -189,8 +209,9 @@
             card.href = 'javascript:void 0';
             var img = document.createElement('img');
             img.loading = 'lazy';
-            img.src = q('/api/cover?c=' + item.category + '&id=' + encodeURIComponent(item.id));
+            img.src = coverOf(item);
             img.alt = item.title;
+            img.onerror = function () { img.style.display = 'none'; };
             card.appendChild(img);
             if (item.rating > 0) {
               var badge = document.createElement('span');
@@ -198,6 +219,10 @@
               badge.textContent = item.rating === 2 ? '18+' : 'R15';
               card.appendChild(badge);
             }
+            var kind = document.createElement('span');
+            kind.className = 'kindtag';
+            kind.textContent = KIND_LABEL[item.category] || item.category;
+            card.appendChild(kind);
             if (item.hasVideo) {
               var play = document.createElement('span');
               play.className = 'play';
@@ -211,7 +236,8 @@
             title.textContent = item.title;
             var sub = document.createElement('div');
             sub.className = 'sub';
-            sub.textContent = (item.category === 'comics' ? item.count + ' 页' : item.count + ' 项');
+            var unit = item.category === 'comics' || item.category === 'novels' ? ' 章/页' : ' 项';
+            sub.textContent = item.count + unit;
             meta.appendChild(title);
             meta.appendChild(sub);
             card.appendChild(meta);
@@ -230,46 +256,92 @@
         var stage = document.getElementById('stage');
         var vtitle = document.getElementById('vtitle');
         var vpos = document.getElementById('vpos');
+        var pager = document.getElementById('pager');
         var prevBtn = document.getElementById('prev');
         var nextBtn = document.getElementById('next');
-        var files = [];
-        var cursor = 0;
-        var current = null;
+        var modeToggle = document.getElementById('modeToggle');
+        var novelbar = document.getElementById('novelbar');
+        var chapterSelect = document.getElementById('chapterSelect');
+        var files = [], cursor = 0, current = null, scrollMode = false;
+
+        function resetViewer() {
+          stage.innerHTML = '';
+          stage.style.display = 'grid';
+          pager.hidden = true;
+          novelbar.hidden = true;
+          modeToggle.hidden = true;
+          vpos.textContent = '';
+          scrollMode = false;
+          modeToggle.textContent = '滚动';
+          modeToggle.className = '';
+        }
 
         function openItem(item) {
           current = item;
           vtitle.textContent = item.title;
           viewer.classList.add('on');
+          resetViewer();
+          if (item.category === 'reports') return openReport(item);
+          if (item.category === 'novels') return openNovel(item);
+          if (item.category === 'comics') {
+            modeToggle.hidden = false;
+            modeToggle.onclick = function () {
+              scrollMode = !scrollMode;
+              modeToggle.textContent = scrollMode ? '翻页' : '滚动';
+              modeToggle.className = scrollMode ? 'on' : '';
+              if (scrollMode) renderComicScroll(); else showFile();
+            };
+          }
           fetch(q('/api/list?c=' + item.category + '&id=' + encodeURIComponent(item.id)))
             .then(function (res) { return res.json(); })
-            .then(function (list) { files = list; cursor = 0; showFile(); })
+            .then(function (list) {
+              files = list; cursor = 0;
+              if (scrollMode) renderComicScroll(); else showFile();
+            })
             .catch(function () { stage.innerHTML = '<div class="empty">读取失败</div>'; });
         }
 
         function showFile() {
-          if (!files.length) {
-            stage.innerHTML = '<div class="empty">这个合集还没有可读文件</div>';
-            return;
-          }
+          stage.style.display = 'grid';
+          pager.hidden = false;
+          if (!files.length) { stage.innerHTML = '<div class="empty">这个合集还没有可读文件</div>'; return; }
           var file = files[cursor];
           var url = q('/media?c=' + current.category + '&id=' + encodeURIComponent(current.id) + '&n=' + file.index);
           stage.innerHTML = '';
           var node;
           if (file.isVideo) {
             node = document.createElement('video');
-            node.controls = true;
-            node.playsInline = true;
-            node.preload = 'metadata';
-            node.src = url;
+            node.controls = true; node.playsInline = true; node.preload = 'metadata'; node.src = url;
           } else {
-            node = document.createElement('img');
-            node.src = url;
-            node.alt = file.name;
+            node = document.createElement('img'); node.src = url; node.alt = file.name;
           }
           stage.appendChild(node);
           vpos.textContent = (cursor + 1) + ' / ' + files.length;
           prevBtn.disabled = cursor <= 0;
           nextBtn.disabled = cursor >= files.length - 1;
+        }
+
+        function renderComicScroll() {
+          pager.hidden = true;
+          stage.style.display = 'block';
+          stage.innerHTML = '';
+          var wrap = document.createElement('div');
+          wrap.className = 'scrollwrap';
+          files.forEach(function (file) {
+            if (file.isVideo) {
+              var video = document.createElement('video');
+              video.controls = true; video.playsInline = true; video.preload = 'none';
+              video.src = q('/media?c=comics&id=' + encodeURIComponent(current.id) + '&n=' + file.index);
+              wrap.appendChild(video);
+            } else {
+              var img = document.createElement('img');
+              img.loading = 'lazy';
+              img.src = q('/media?c=comics&id=' + encodeURIComponent(current.id) + '&n=' + file.index);
+              wrap.appendChild(img);
+            }
+          });
+          stage.appendChild(wrap);
+          vpos.textContent = files.length + ' 页';
         }
 
         prevBtn.addEventListener('click', function () { if (cursor > 0) { cursor -= 1; showFile(); } });
@@ -279,13 +351,101 @@
           stage.innerHTML = '';
         });
 
+        /* ------- 报道 ------- */
+        function openReport(item) {
+          stage.style.display = 'block';
+          stage.innerHTML = '<div class="empty">正在加载报道…</div>';
+          fetch(q('/api/report?id=' + encodeURIComponent(item.id)))
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+              var article = document.createElement('article');
+              article.className = 'report';
+              (data.blocks || []).forEach(function (block) {
+                var node;
+                if (block.type === 'h1') { node = document.createElement('h1'); node.textContent = block.text; }
+                else if (block.type === 'h2') { node = document.createElement('h2'); node.textContent = block.text; }
+                else if (block.type === 'quote') { node = document.createElement('blockquote'); node.textContent = block.text; }
+                else if (block.type === 'divider') { node = document.createElement('hr'); }
+                else if (block.type === 'image' && block.url) {
+                  node = document.createElement('img'); node.loading = 'lazy'; node.src = q(block.url);
+                } else if (block.type === 'video' && block.url) {
+                  node = document.createElement('video'); node.controls = true; node.playsInline = true;
+                  node.preload = 'metadata'; node.src = q(block.url);
+                } else if (block.type === 'audio' && block.url) {
+                  node = document.createElement('audio'); node.controls = true; node.src = q(block.url);
+                } else {
+                  node = document.createElement('p'); node.textContent = block.text || '';
+                }
+                article.appendChild(node);
+                if (block.caption) {
+                  var cap = document.createElement('p');
+                  cap.style.fontSize = '12px'; cap.style.color = 'rgba(243,240,247,0.45)';
+                  cap.textContent = block.caption;
+                  article.appendChild(cap);
+                }
+              });
+              stage.innerHTML = '';
+              stage.appendChild(article);
+              vpos.textContent = (data.blocks || []).length + ' 块';
+            })
+            .catch(function () { stage.innerHTML = '<div class="empty">报道读取失败</div>'; });
+        }
+
+        /* ------- 小说 ------- */
+        function openNovel(item) {
+          stage.style.display = 'block';
+          novelbar.hidden = false;
+          stage.innerHTML = '<div class="empty">正在加载目录…</div>';
+          fetch(q('/api/list?c=novels&id=' + encodeURIComponent(item.id)))
+            .then(function (res) { return res.json(); })
+            .then(function (list) {
+              chapterSelect.innerHTML = '';
+              list.forEach(function (file) {
+                var option = document.createElement('option');
+                option.value = String(file.index);
+                option.textContent = file.name;
+                chapterSelect.appendChild(option);
+              });
+              chapterSelect.onchange = function () { loadChapter(current.id, Number(chapterSelect.value)); };
+              if (!list.length) { stage.innerHTML = '<div class="empty">这本小说还没有章节</div>'; return; }
+              loadChapter(current.id, 0);
+            })
+            .catch(function () { stage.innerHTML = '<div class="empty">目录读取失败</div>'; });
+        }
+
+        function loadChapter(id, index) {
+          stage.innerHTML = '<div class="empty">正在读取正文…</div>';
+          fetch(q('/api/novel?c=novels&id=' + encodeURIComponent(id) + '&n=' + index))
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+              var article = document.createElement('article');
+              article.className = 'novel';
+              var heading = document.createElement('h2');
+              heading.textContent = data.name || '正文';
+              article.appendChild(heading);
+              var paragraphs = String(data.text || '').split(/\n{1,}/);
+              paragraphs.forEach(function (line) {
+                if (!line.trim()) return;
+                var p = document.createElement('p');
+                p.textContent = line;
+                article.appendChild(p);
+              });
+              stage.innerHTML = '';
+              stage.appendChild(article);
+              stage.scrollTop = 0;
+            })
+            .catch(function () { stage.innerHTML = '<div class="empty">章节读取失败</div>'; });
+        }
+
         /* ------- 初始化 ------- */
         var cats = [
           { key: 'all', label: '全部' },
           { key: 'images', label: '图片' },
           { key: 'videos', label: '视频' },
           { key: 'comics', label: '漫画' },
-          { key: 'screenshots', label: '截图' }
+          { key: 'novels', label: '小说' },
+          { key: 'reports', label: '报道' },
+          { key: 'screenshots', label: '截图' },
         ];
         cats.forEach(function (cat) {
           var button = document.createElement('button');
@@ -316,13 +476,9 @@
             if (res.status === 401) throw new Error('token');
             return res.json();
           })
-          .then(function (list) {
-            items = list;
-            applyFilter();
-          })
+          .then(function (list) { items = list; applyFilter(); })
           .catch(function (error) {
-            grid.innerHTML =
-              '<div class="empty">' +
+            grid.innerHTML = '<div class="empty">' +
               (error && error.message === 'token'
                 ? '访问令牌已失效，请在电脑端重新启动手机访问。'
                 : '连接失败，确认手机和电脑在同一个 WiFi，且电脑上的手机访问已开启。') +

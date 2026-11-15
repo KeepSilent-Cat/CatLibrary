@@ -286,6 +286,10 @@ fn handle_connection(
       Err(error) => respond_text(&mut stream, 400, &error),
     },
     "/media" => serve_media(&mut stream, root, &request),
+    "/file" => serve_arbitrary(&mut stream, root, &request),
+    "/thumb" => serve_any_thumb(&mut stream, root, &request),
+    "/api/report" => serve_report_json(&mut stream, root, &request, token),
+    "/api/novel" => serve_novel_text(&mut stream, root, &request),
     _ => respond_text(&mut stream, 404, "not found"),
   }
 }
@@ -510,13 +514,17 @@ struct MobileItem {
   count: usize,
   tags: Vec<String>,
   has_video: bool,
+  /// 报道用：缩略图地址（其余分类走 /api/cover）
+  cover_url: Option<String>,
+  /// 报道 / 小说等非媒体分类的标签
+  kind: String,
 }
 
 fn build_index(root: &Path, app: &tauri::AppHandle) -> Result<String, String> {
   let metadata = load_library_metadata(app, root)?;
   let mut items: Vec<MobileItem> = Vec::new();
 
-  for category in ["screenshots", "images", "videos", "comics"] {
+  for category in ["screenshots", "images", "videos", "comics", "novels"] {
     let dir = root.join(category);
     let Ok(entries) = fs::read_dir(&dir) else { continue };
     for entry in entries.flatten() {
@@ -549,6 +557,64 @@ fn build_index(root: &Path, app: &tauri::AppHandle) -> Result<String, String> {
         count: files.len(),
         tags,
         has_video,
+        cover_url: None,
+        kind: category.to_string(),
+      });
+    }
+  }
+
+  // 报道：每篇一个 report.json，封面取第一个图片块的缩略图
+  let reports_dir = root.join("reports");
+  if let Ok(entries) = fs::read_dir(&reports_dir) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if !path.is_dir() {
+        continue;
+      }
+      let Some(id) = path.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
+        continue;
+      };
+      let Ok(bytes) = fs::read(path.join("report.json")) else { continue };
+      let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue };
+      let title = value
+        .get("title")
+        .and_then(|item| item.as_str())
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or(&id)
+        .to_string();
+
+      let mut block_count = 0usize;
+      let mut cover_url: Option<String> = None;
+      if let Some(blocks) = value.get("blocks").and_then(|item| item.as_array()) {
+        block_count = blocks.len();
+        for block in blocks {
+          if block.get("type").and_then(|item| item.as_str()) != Some("image") {
+            continue;
+          }
+          let raw = block
+            .get("media")
+            .and_then(|item| item.get("path"))
+            .and_then(|item| item.as_str());
+          if let Some(raw) = raw {
+            if let Some(url) = media_url_from_block(raw, "") {
+              cover_url = Some(url.replace("/file?", "/thumb?").replace("&t=&", "&"));
+            }
+          }
+          break;
+        }
+      }
+
+      items.push(MobileItem {
+        key: format!("reports/{id}"),
+        category: "reports".to_string(),
+        id,
+        title,
+        rating: 2,
+        count: block_count,
+        tags: Vec::new(),
+        has_video: false,
+        cover_url,
+        kind: "reports".to_string(),
       });
     }
   }
@@ -764,4 +830,264 @@ mod tests {
     assert_eq!(body.len(), 10);
     assert!(headers.contains("Accept-Ranges: bytes"));
   }
+}
+
+/* ---------------- 报道 / 小说 / 任意文件 ---------------- */
+
+/// 把 library 根目录内的绝对路径做安全校验后返回
+fn resolve_inside_root(root: &Path, raw: &str) -> Result<PathBuf, String> {
+  let candidate = PathBuf::from(raw);
+  let canonical = candidate
+    .canonicalize()
+    .map_err(|_| "文件不存在".to_string())?;
+  let root_canonical = root.canonicalize().map_err(|error| error.to_string())?;
+  if !canonical.starts_with(&root_canonical) {
+    return Err("路径越界".to_string());
+  }
+  if !canonical.is_file() {
+    return Err("不是文件".to_string());
+  }
+  Ok(canonical)
+}
+
+fn encode_component(value: &str) -> String {
+  let mut out = String::new();
+  for byte in value.as_bytes() {
+    let ch = *byte as char;
+    if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~' | '/') {
+      out.push(ch);
+    } else {
+      out.push_str(&format!("%{byte:02X}"));
+    }
+  }
+  out
+}
+
+/// 把 report.json 里的 asset URL 或绝对路径，转成手机端可用的 /file 链接
+fn media_url_from_block(raw: &str, token: &str) -> Option<String> {
+  let marker = "http://asset.localhost/";
+  let path = if let Some(rest) = raw.strip_prefix(marker) {
+    percent_decode(rest)
+  } else if raw.starts_with('/') || raw.chars().nth(1) == Some(':') {
+    raw.to_string()
+  } else {
+    return None;
+  };
+  Some(format!("/file?t={token}&p={}", encode_component(&path)))
+}
+
+fn serve_report_json(
+  stream: &mut TcpStream,
+  root: &Path,
+  request: &Request,
+  token: &str,
+) -> std::io::Result<()> {
+  let Some(report_id) = query_value(&request.query, "id") else {
+    return respond_text(stream, 400, "缺少报道 id");
+  };
+  if report_id.contains("..") || report_id.contains('/') || report_id.contains('\\') {
+    return respond_text(stream, 400, "报道 id 不合法");
+  }
+  let file = root.join("reports").join(&report_id).join("report.json");
+  let Ok(bytes) = fs::read(&file) else {
+    return respond_text(stream, 404, "报道不存在");
+  };
+  let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+    return respond_text(stream, 500, "报道格式损坏");
+  };
+
+  let mut blocks = Vec::new();
+  if let Some(list) = value.get("blocks").and_then(|item| item.as_array()) {
+    for block in list {
+      let block_type = block.get("type").and_then(|item| item.as_str()).unwrap_or("text");
+      let text = block.get("text").and_then(|item| item.as_str()).unwrap_or("");
+      let caption = block.get("caption").and_then(|item| item.as_str()).unwrap_or("");
+      let media = block.get("media").and_then(|item| item.as_object());
+      let url = media
+        .and_then(|item| item.get("path"))
+        .and_then(|item| item.as_str())
+        .and_then(|raw| media_url_from_block(raw, token));
+      let title = media
+        .and_then(|item| item.get("title"))
+        .and_then(|item| item.as_str())
+        .unwrap_or("");
+      blocks.push(serde_json::json!({
+        "type": block_type,
+        "text": text,
+        "caption": caption,
+        "url": url,
+        "mediaTitle": title,
+      }));
+    }
+  }
+
+  let payload = serde_json::json!({
+    "id": report_id,
+    "title": value.get("title").and_then(|item| item.as_str()).unwrap_or("未命名报道"),
+    "subtitle": value.get("subtitle").and_then(|item| item.as_str()).unwrap_or(""),
+    "blocks": blocks,
+  });
+  respond_bytes(
+    stream,
+    200,
+    "application/json; charset=utf-8",
+    payload.to_string().as_bytes(),
+    None,
+  )
+}
+
+/// 小说正文：按章节文件读取，自动识别 UTF-8 / UTF-16 / GBK
+fn serve_novel_text(stream: &mut TcpStream, root: &Path, request: &Request) -> std::io::Result<()> {
+  let category = query_value(&request.query, "c").unwrap_or_else(|| "novels".to_string());
+  let Some(item_id) = query_value(&request.query, "id") else {
+    return respond_text(stream, 400, "缺少条目");
+  };
+  let index: usize = query_value(&request.query, "n")
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(0);
+  let files = category_files(root, &category, &item_id);
+  let Some(path) = files.get(index) else {
+    return respond_text(stream, 404, "章节不存在");
+  };
+  let Ok(bytes) = fs::read(path) else {
+    return respond_text(stream, 404, "读不到章节文件");
+  };
+  if bytes.len() > 8 * 1024 * 1024 {
+    return respond_text(stream, 413, "这一章太大了（超过 8MB）");
+  }
+  let text = decode_text(&bytes);
+  let payload = serde_json::json!({
+    "name": path.file_name().and_then(|value| value.to_str()).unwrap_or("章节"),
+    "text": text,
+  });
+  respond_bytes(
+    stream,
+    200,
+    "application/json; charset=utf-8",
+    payload.to_string().as_bytes(),
+    None,
+  )
+}
+
+/// 按扩展名解码文本：BOM / UTF-16 / GB18030 都试一遍
+fn decode_text(bytes: &[u8]) -> String {
+  if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+    return String::from_utf8_lossy(&bytes[3..]).to_string();
+  }
+  if bytes.starts_with(&[0xFF, 0xFE]) {
+    let (text, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+    return text.to_string();
+  }
+  if bytes.starts_with(&[0xFE, 0xFF]) {
+    let (text, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+    return text.to_string();
+  }
+  if let Ok(text) = std::str::from_utf8(bytes) {
+    return text.to_string();
+  }
+  let (text, _, _) = encoding_rs::GB18030.decode(bytes);
+  text.to_string()
+}
+
+/// 任意文件（报道里的图片/视频），支持 Range
+fn serve_arbitrary(stream: &mut TcpStream, root: &Path, request: &Request) -> std::io::Result<()> {
+  let Some(raw) = query_value(&request.query, "p") else {
+    return respond_text(stream, 400, "缺少路径");
+  };
+  match resolve_inside_root(root, &raw) {
+    Ok(path) => serve_file(stream, &path, request.range),
+    Err(error) => respond_text(stream, 404, &error),
+  }
+}
+
+/// 任意图片的缩略图（用于报道封面）
+fn serve_any_thumb(stream: &mut TcpStream, root: &Path, request: &Request) -> std::io::Result<()> {
+  let Some(raw) = query_value(&request.query, "p") else {
+    return respond_text(stream, 400, "缺少路径");
+  };
+  let Ok(path) = resolve_inside_root(root, &raw) else {
+    return respond_text(stream, 404, "文件不存在");
+  };
+  match thumbnail_for(root, &path) {
+    Ok(bytes) => respond_bytes(stream, 200, "image/jpeg", &bytes, None),
+    Err(error) => respond_text(stream, 500, &error),
+  }
+}
+
+fn serve_file(
+  stream: &mut TcpStream,
+  path: &Path,
+  range: Option<(u64, Option<u64>)>,
+) -> std::io::Result<()> {
+  let Ok(mut file) = fs::File::open(path) else {
+    return respond_text(stream, 404, "文件打不开");
+  };
+  let total = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+  let content_type = mime_for(path);
+  let (start, end) = match range {
+    Some((start, Some(end))) => (
+      start.min(total.saturating_sub(1)),
+      end.min(total.saturating_sub(1)),
+    ),
+    Some((start, None)) => (start.min(total.saturating_sub(1)), total.saturating_sub(1)),
+    None => (0, total.saturating_sub(1)),
+  };
+  let length = end.saturating_sub(start) + 1;
+  let partial = range.is_some();
+  let status = if partial { 206 } else { 200 };
+  let mut head = format!(
+    "HTTP/1.1 {status} {}\r\nContent-Type: {content_type}\r\nContent-Length: {length}\r\nAccept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n",
+    status_text(status)
+  );
+  if partial {
+    head.push_str(&format!("Content-Range: bytes {start}-{end}/{total}\r\n"));
+  }
+  head.push_str("\r\n");
+  stream.write_all(head.as_bytes())?;
+  file.seek(SeekFrom::Start(start))?;
+  let mut remaining = length;
+  let mut buffer = vec![0u8; 64 * 1024];
+  while remaining > 0 {
+    let want = remaining.min(buffer.len() as u64) as usize;
+    let read = file.read(&mut buffer[..want])?;
+    if read == 0 {
+      break;
+    }
+    stream.write_all(&buffer[..read])?;
+    remaining -= read as u64;
+  }
+  stream.flush()
+}
+
+/// 生成并缓存缩略图
+fn thumbnail_for(root: &Path, source: &Path) -> Result<Vec<u8>, String> {
+  let modified = fs::metadata(source)
+    .and_then(|meta| meta.modified())
+    .map(|time| {
+      time
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default()
+    })
+    .unwrap_or_default();
+  let mut hasher = Sha256::new();
+  hasher.update(source.to_string_lossy().as_bytes());
+  hasher.update(modified.to_le_bytes());
+  let cache_key: String = hasher.finalize()[..12].iter().map(|byte| format!("{byte:02x}")).collect();
+  let cache_dir = thumb_cache_dir(root);
+  let cache_path = cache_dir.join(format!("{cache_key}.jpg"));
+  if let Ok(bytes) = fs::read(&cache_path) {
+    return Ok(bytes);
+  }
+  let image = image::open(source).map_err(|error| error.to_string())?;
+  let thumb = image.thumbnail(MAX_THUMB, MAX_THUMB).to_rgb8();
+  let mut buffer = std::io::Cursor::new(Vec::new());
+  let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, 78);
+  encoder
+    .encode(thumb.as_raw(), thumb.width(), thumb.height(), image::ExtendedColorType::Rgb8)
+    .map_err(|error| error.to_string())?;
+  let bytes = buffer.into_inner();
+  let _ = fs::create_dir_all(&cache_dir);
+  let _ = fs::write(&cache_path, &bytes);
+  Ok(bytes)
 }
