@@ -1,7 +1,7 @@
 import {MusicSession} from "@/components/PersistentMusic";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, MessageCircle, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
+import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, MessageCircle, MoreHorizontal, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { categoryMeta, RATING_OPTIONS, type CategoryKey, type ContentRating, type LibraryItem } from "@/data/library";
@@ -39,6 +39,8 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const setDanmakuOpacity = useAppStore((state) => state.setDanmakuOpacity);
   const setDanmakuFontSize = useAppStore((state) => state.setDanmakuFontSize);
   const setDanmakuSpeed = useAppStore((state) => state.setDanmakuSpeed);
+  const danmakuArea = useAppStore((state) => state.danmakuArea);
+  const setDanmakuArea = useAppStore((state) => state.setDanmakuArea);
   const ratingFilter = useAppStore((state) => state.ratingFilter);
   const openGameCoverScreenshot = useAppStore((state) => state.openGameCoverScreenshot);
   const coverRefreshSignal = useAppStore((state) => state.coverRefreshSignal);
@@ -103,6 +105,26 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const [danmakuItems, setDanmakuItems] = useState<DanmakuItem[]>([]);
   const [danmakuMenuOpen, setDanmakuMenuOpen] = useState(false);
   const [danmakuBusy, setDanmakuBusy] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  // 播放区自定义全屏：把视频和弹幕层一起放大，原生全屏只会放大 video 导致弹幕消失
+  const videoStageRef = useRef<HTMLDivElement | null>(null);
+  const [stageFull, setStageFull] = useState(false);
+  useEffect(() => {
+    const onChange = () => setStageFull(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleStageFullscreen = async () => {
+    const node = videoStageRef.current;
+    if (!node) {
+      return;
+    }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    await node.requestFullscreen().catch(() => undefined);
+  };
 
   const refreshLibraryState = async () => {
     const index = filterLibraryIndex(await loadLibraryIndex(resourceRoot), ratingFilter);
@@ -455,6 +477,38 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   };
 
   // 删除整个条目：两步确认（第一次点击进入确认态，3 秒内再点执行）
+  // 把当前播放画面存成视频封面
+  const setCoverFromFrame = async () => {
+    const video = videoFrameRef.current;
+    if (!video || !currentItem || video.readyState < 2 || video.seeking) {
+      setSaveError("请先播放到需要的画面");
+      return;
+    }
+    setVideoCoverBusy(true);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("无法创建画布");
+      }
+      context.drawImage(video, 0, 0);
+      await invoke("set_video_cover", {
+        resourceRoot,
+        groupId: currentItem.id,
+        image: { name: "frame.png", data: canvas.toDataURL("image/png").split(",")[1] },
+      });
+      clearLibraryIndexCache(resourceRoot);
+      await refreshLibraryState();
+      setSavedToast("当前帧已保存为封面");
+    } catch (currentError) {
+      setSaveError("保存当前帧失败：" + String(currentError));
+    } finally {
+      setVideoCoverBusy(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!currentItem) {
       return;
@@ -972,7 +1026,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
               />
             ) : (
               <div className="relative overflow-hidden rounded-[28px] bg-black/16">
-              {isVideos&&<button disabled={videoCoverBusy} className="rounded-full border border-white/20 px-4 py-2" onClick={async()=>{const video=videoFrameRef.current;if(!video||!currentItem||video.readyState<2||video.seeking){setSaveError('请先播放到需要的画面');return;}setVideoCoverBusy(true);try{const c=document.createElement('canvas');c.width=video.videoWidth;c.height=video.videoHeight;const ctx=c.getContext('2d');if(!ctx)throw Error('无法创建画布');ctx.drawImage(video,0,0);await invoke('set_video_cover',{resourceRoot,groupId:currentItem.id,image:{name:'frame.png',data:c.toDataURL('image/png').split(',')[1]}});clearLibraryIndexCache(resourceRoot);await refreshLibraryState();setSavedToast('当前帧已保存为封面');}catch(e){setSaveError('保存当前帧失败：'+String(e));}finally{setVideoCoverBusy(false);}}}>用当前播放画面设置封面</button>}
+
               {isVideos && videoTracks.length > 0 ? (
                 <div className="flex items-center gap-2 overflow-x-auto border-b border-white/10 bg-black/55 px-3 py-2">
                   <button
@@ -1020,7 +1074,10 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     正在读取视频列表…
                   </div>
                 ) : (
-                  <div className="relative">
+                  <div
+                    ref={videoStageRef}
+                    className={stageFull ? "relative flex h-screen w-screen items-center justify-center bg-black" : "relative"}
+                  >
                   <DanmakuOverlay
                     videoRef={videoFrameRef}
                     items={danmakuItems}
@@ -1028,6 +1085,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     opacity={danmakuOpacity}
                     fontSize={danmakuFontSize}
                     speed={danmakuSpeed}
+                    area={danmakuArea}
                   />
                   <video crossOrigin="anonymous" ref={videoFrameRef}
                     key={videoTracks[videoIndex]?.path ?? currentItem.previewMedia ?? "empty"}
@@ -1037,8 +1095,14 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                         : (currentItem.previewMedia ?? undefined)
                     }
                     controls
+                    controlsList="nofullscreen"
                     playsInline
-                    className="mx-auto block max-h-[70vh] w-full object-contain"
+                    onDoubleClick={() => void toggleStageFullscreen()}
+                    className={
+                      stageFull
+                        ? "block h-full w-full object-contain"
+                        : "mx-auto block max-h-[70vh] w-full object-contain"
+                    }
                     onLoadedMetadata={(event) => {
                       const node = event.currentTarget;
                       // 字幕轨加载完默认关，这里按当前选择打开
@@ -1101,18 +1165,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     设为背景
                   </button>
                 ) : null}
-                {isVideos ? (
-                  <button
-                    type="button"
-                    onClick={() => void openVideoCoverPicker()}
-                    disabled={videoCoverBusy}
-                    title="从图片库挑一张图作为这个视频条目的封面"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-white/24 bg-black/55 px-3.5 py-2 text-xs text-white/90 backdrop-blur-sm transition hover:bg-black/75 hover:text-white disabled:opacity-50"
-                  >
-                    <ImagePlus className="h-3.5 w-3.5" />
-                    设置封面
-                  </button>
-                ) : null}
+
                 {isVideos && danmakuTracks.length > 0 ? (
                   <div className="relative">
                     <button
@@ -1155,6 +1208,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                             { label: "不透明度", value: danmakuOpacity, min: 0.2, max: 1, step: 0.05, apply: setDanmakuOpacity },
                             { label: "字号", value: danmakuFontSize, min: 14, max: 34, step: 1, apply: setDanmakuFontSize },
                             { label: "速度", value: danmakuSpeed, min: 0.5, max: 2, step: 0.1, apply: setDanmakuSpeed },
+                            { label: "显示区域", value: danmakuArea, min: 0.2, max: 1, step: 0.06, apply: setDanmakuArea },
                           ].map((control) => (
                             <label key={control.label} className="mt-2 block">
                               <span className="flex items-center justify-between text-[10px] text-white/40">
@@ -1164,7 +1218,9 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                                     ? `${Math.round(control.value * 100)}%`
                                     : control.label === "速度"
                                       ? `${control.value.toFixed(1)}x`
-                                      : `${control.value}px`}
+                                      : control.label === "显示区域"
+                                        ? `上部 ${Math.round(control.value * 100)}%`
+                                        : `${control.value}px`}
                                 </span>
                               </span>
                               <input
@@ -1212,6 +1268,17 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                       </>
                     ) : null}
                   </div>
+                ) : null}
+                {isVideos ? (
+                  <button
+                    type="button"
+                    onClick={() => void toggleStageFullscreen()}
+                    title={stageFull ? "退出全屏（Esc）" : "全屏播放（弹幕一起放大）"}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/24 bg-black/55 px-3.5 py-2 text-xs text-white/90 backdrop-blur-sm transition hover:bg-black/75 hover:text-white"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    {stageFull ? "退出全屏" : "全屏"}
+                  </button>
                 ) : null}
                 {isVideos && subtitleTracks.length > 0 ? (
                   <div className="relative">
@@ -1266,19 +1333,9 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     ) : null}
                   </div>
                 ) : null}
-                {isVideos && currentItem.coverImage ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteVideoCover()}
-                    disabled={videoCoverBusy}
-                    title="移除自定义封面，回到自动生成"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/30 bg-black/55 px-3.5 py-2 text-xs text-rose-100 backdrop-blur-sm transition hover:bg-black/75 disabled:opacity-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    移除封面
-                  </button>
-                ) : null}
+
               </div>
+              {!isVideos ? (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 p-6">
                 <div className="max-w-2xl rounded-[28px] bg-black/18 px-5 py-4">
                   <p className="text-xs uppercase tracking-[0.24em] text-white/56">{meta.title}</p>
@@ -1294,6 +1351,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                   </p>
                 </div>
               </div>
+              ) : null}
             </div>
             )}
           </div>

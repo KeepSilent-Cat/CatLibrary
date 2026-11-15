@@ -15,13 +15,15 @@ type Props = {
   opacity: number;
   fontSize: number;
   speed: number;
+  /** 弹幕占用画面高度的比例（0.25~1），默认只用上部三分之一 */
+  area?: number;
 };
 
 /**
  * 弹幕层：完全基于 video.currentTime 做时钟，暂停/拖动都会跟着走。
  * 用 requestAnimationFrame 手动定位，才能做到暂停即静止、拖动即重排。
  */
-export default function DanmakuOverlay({ videoRef, items, enabled, opacity, fontSize, speed }: Props) {
+export default function DanmakuOverlay({ videoRef, items, enabled, opacity, fontSize, speed, area = 0.34 }: Props) {
   const layerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -52,7 +54,9 @@ export default function DanmakuOverlay({ videoRef, items, enabled, opacity, font
     let lastTime = -1;
 
     const measure = () => {
-      rows = Math.max(1, Math.min(16, Math.floor(layer.clientHeight / rowHeight)));
+      // 只在上部这块区域里排弹幕，避免铺满整屏挡画面
+      const usable = Math.max(rowHeight, layer.clientHeight * Math.min(1, Math.max(0.2, area)));
+      rows = Math.max(1, Math.min(16, Math.floor(usable / rowHeight)));
       laneFree.length = 0;
       for (let index = 0; index < rows; index += 1) {
         laneFree.push(0);
@@ -199,7 +203,7 @@ export default function DanmakuOverlay({ videoRef, items, enabled, opacity, font
       clearActive();
       layer.replaceChildren();
     };
-  }, [items, enabled, fontSize, speed, videoRef]);
+  }, [items, enabled, fontSize, speed, area, videoRef]);
 
   return (
     <div

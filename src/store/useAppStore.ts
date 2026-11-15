@@ -87,6 +87,8 @@ interface AppState {
   danmakuOpacity: number;
   danmakuFontSize: number;
   danmakuSpeed: number;
+  /** 弹幕占用画面高度的比例：0.25 / 0.34 / 0.5 / 0.75 / 1 */
+  danmakuArea: number;
   // 截图：快捷键（如 "ctrl+shift+s"）、打开状态、保存成功提示
   screenshotShortcut: string;
   screenshotOpen: boolean;
@@ -124,6 +126,7 @@ interface AppState {
   setDanmakuOpacity: (value: number) => void;
   setDanmakuFontSize: (value: number) => void;
   setDanmakuSpeed: (value: number) => void;
+  setDanmakuArea: (value: number) => void;
   setScreenshotShortcut: (value: string) => void;
   setAutoPlaySpeed: (value: number) => void;
   setChapterDelay: (value: number) => void;
@@ -187,10 +190,12 @@ export const useAppStore = create<AppState>()(
       danmakuOpacity: 0.9,
       danmakuFontSize: 22,
       danmakuSpeed: 1,
+      danmakuArea: 0.34,
       setDanmakuEnabled: (value) => set({ danmakuEnabled: value }),
       setDanmakuOpacity: (value) => set({ danmakuOpacity: value }),
       setDanmakuFontSize: (value) => set({ danmakuFontSize: value }),
       setDanmakuSpeed: (value) => set({ danmakuSpeed: value }),
+      setDanmakuArea: (value) => set({ danmakuArea: value }),
       screenshotShortcut: "ctrl+shift+s",
       screenshotOpen: false,
       screenshotTarget: { type: "library" },
