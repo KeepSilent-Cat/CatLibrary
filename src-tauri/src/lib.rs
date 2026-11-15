@@ -3698,6 +3698,8 @@ pub fn run() {
       extract_comic_chapter,
       delete_comic_chapter,
       delete_library_item,
+      list_video_subtitles,
+      load_video_subtitle,
       mobile_server::start_mobile_access,
       mobile_server::stop_mobile_access,
       mobile_server::mobile_access_status,
@@ -4158,4 +4160,228 @@ mod library_upgrade_tests {
         assert!(read_backup_settings(path_to_string(p)).is_err());
         assert!(read_backup_settings(path_to_string(f.0.join("metadata.json"))).is_err());
     }
+}
+
+/* ---------------- 字幕 ---------------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubtitleTrackPayload {
+  name: String,
+  path: String,
+  format: String,
+}
+
+const SUBTITLE_EXTENSIONS: &[&str] = &["ass", "ssa", "srt", "vtt"];
+
+/// 列出与某个视频放在同一目录下的外挂字幕（同名优先）
+#[tauri::command]
+fn list_video_subtitles(video_path: String) -> Result<Vec<SubtitleTrackPayload>, String> {
+  let path = PathBuf::from(&video_path);
+  let dir = path.parent().ok_or_else(|| "视频路径不合法".to_string())?;
+  let stem = path
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .unwrap_or_default()
+    .to_string();
+
+  let mut tracks: Vec<SubtitleTrackPayload> = Vec::new();
+  let entries = fs::read_dir(dir).map_err(|error| error.to_string())?;
+  for entry in entries.flatten() {
+    let file = entry.path();
+    if !file.is_file() || !has_extension(&file, SUBTITLE_EXTENSIONS) {
+      continue;
+    }
+    let name = file
+      .file_stem()
+      .and_then(|value| value.to_str())
+      .unwrap_or("字幕")
+      .to_string();
+    let format = file
+      .extension()
+      .and_then(|value| value.to_str())
+      .unwrap_or("srt")
+      .to_ascii_lowercase();
+    tracks.push(SubtitleTrackPayload {
+      name,
+      path: path_to_string(file),
+      format,
+    });
+  }
+
+  // 与视频同名的字幕排最前，其余按名字排序
+  tracks.sort_by(|left, right| {
+    let left_same = !stem.is_empty() && left.name == stem;
+    let right_same = !stem.is_empty() && right.name == stem;
+    right_same
+      .cmp(&left_same)
+      .then_with(|| left.name.cmp(&right.name))
+  });
+  Ok(tracks)
+}
+
+/// 把外挂字幕转成 WebVTT 文本（网页播放器只能吃 vtt）
+#[tauri::command]
+fn load_video_subtitle(path: String) -> Result<String, String> {
+  let file = PathBuf::from(&path);
+  let bytes = fs::read(&file).map_err(|error| error.to_string())?;
+  let text = decode_text_bytes(&bytes);
+  let format = file
+    .extension()
+    .and_then(|value| value.to_str())
+    .unwrap_or("srt")
+    .to_ascii_lowercase();
+  match format.as_str() {
+    "vtt" => Ok(if text.trim_start().starts_with("WEBVTT") {
+      text
+    } else {
+      format!("WEBVTT\n\n{text}")
+    }),
+    "ass" | "ssa" => Ok(ass_to_vtt(&text)),
+    _ => Ok(srt_to_vtt(&text)),
+  }
+}
+
+fn srt_to_vtt(text: &str) -> String {
+  let mut out = String::from("WEBVTT\n\n");
+  for line in text.replace("\r\n", "\n").lines() {
+    let trimmed = line.trim_end();
+    if trimmed.contains("-->") {
+      out.push_str(&trimmed.replace(',', "."));
+    } else {
+      out.push_str(trimmed);
+    }
+    out.push('\n');
+  }
+  out
+}
+
+/// ASS/SSA 转 VTT：只保留时间轴和文字，丢弃样式（网页播放器不支持 ASS 特效）
+fn ass_to_vtt(text: &str) -> String {
+  let mut out = String::from("WEBVTT\n\n");
+  let mut in_events = false;
+  let mut start_index = 1usize;
+  let mut end_index = 2usize;
+  let mut text_index = 9usize;
+
+  for line in text.replace("\r\n", "\n").lines() {
+    let trimmed = line.trim();
+    if trimmed.starts_with('[') {
+      in_events = trimmed.eq_ignore_ascii_case("[Events]");
+      continue;
+    }
+    if !in_events {
+      continue;
+    }
+    if let Some(rest) = trimmed.strip_prefix("Format:") {
+      let fields: Vec<String> = rest
+        .split(',')
+        .map(|field| field.trim().to_ascii_lowercase())
+        .collect();
+      for (index, field) in fields.iter().enumerate() {
+        match field.as_str() {
+          "start" => start_index = index,
+          "end" => end_index = index,
+          "text" => text_index = index,
+          _ => {}
+        }
+      }
+      continue;
+    }
+    let body = if let Some(rest) = trimmed.strip_prefix("Dialogue:") {
+      rest
+    } else {
+      continue;
+    };
+
+    let parts: Vec<&str> = body.splitn(text_index + 1, ',').collect();
+    if parts.len() <= text_index.max(end_index) {
+      continue;
+    }
+    let start = ass_time_to_vtt(parts.get(start_index).copied().unwrap_or(""));
+    let end = ass_time_to_vtt(parts.get(end_index).copied().unwrap_or(""));
+    if start.is_empty() || end.is_empty() {
+      continue;
+    }
+    let raw_text = parts.get(text_index).copied().unwrap_or("");
+    let cleaned = clean_ass_text(raw_text);
+    if cleaned.is_empty() {
+      continue;
+    }
+    out.push_str(&format!("{start} --> {end}\n{cleaned}\n\n"));
+  }
+
+  out
+}
+
+fn ass_time_to_vtt(value: &str) -> String {
+  // 0:00:01.23 → 00:00:01.230
+  let value = value.trim();
+  let mut parts = value.split(':');
+  let hours = parts.next().unwrap_or("0").trim().parse::<u64>().unwrap_or(0);
+  let minutes = parts.next().unwrap_or("0").trim().parse::<u64>().unwrap_or(0);
+  let seconds_raw = parts.next().unwrap_or("0").trim();
+  let (seconds, millis) = match seconds_raw.split_once('.') {
+    Some((sec, frac)) => {
+      let sec = sec.parse::<u64>().unwrap_or(0);
+      let frac = format!("{frac:0<3}");
+      (sec, frac[..3].parse::<u64>().unwrap_or(0))
+    }
+    None => (seconds_raw.parse::<u64>().unwrap_or(0), 0),
+  };
+  format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+}
+
+fn clean_ass_text(raw: &str) -> String {
+  let mut out = String::new();
+  let mut depth = 0usize;
+  let mut chars = raw.chars().peekable();
+  while let Some(ch) = chars.next() {
+    match ch {
+      '{' => depth += 1,
+      '}' => depth = depth.saturating_sub(1),
+      '\\' if depth == 0 => match chars.peek() {
+        Some('N') | Some('n') => {
+          chars.next();
+          out.push('\n');
+        }
+        Some('h') => {
+          chars.next();
+          out.push(' ');
+        }
+        _ => out.push('\\'),
+      },
+      _ if depth == 0 => out.push(ch),
+      _ => {}
+    }
+  }
+  out.replace('\u{00a0}', " ").trim().to_string()
+}
+
+#[cfg(test)]
+mod subtitle_tests {
+  use super::*;
+
+  #[test]
+  fn converts_ass_dialogues_and_drops_style_tags() {
+    let ass = "[Script Info]\nTitle: test\n\n[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.50,Default,,0,0,0,,{\\i1}你好\\N世界{\\i0}\nDialogue: 0,0:01:02.10,0:01:04.00,Default,,0,0,0,,包含,逗号的台词\nComment: 0,0:00:05.00,0:00:06.00,Default,,0,0,0,,这一行要忽略\n";
+    let vtt = ass_to_vtt(ass);
+    assert!(vtt.starts_with("WEBVTT"));
+    assert!(vtt.contains("00:00:01.000 --> 00:00:03.500"));
+    assert!(vtt.contains("你好\n世界"));
+    assert!(!vtt.contains("\\i1"));
+    // 文本里的逗号不能被字段切分吃掉
+    assert!(vtt.contains("包含,逗号的台词"));
+    // Comment 行不输出
+    assert!(!vtt.contains("这一行要忽略"));
+  }
+
+  #[test]
+  fn converts_srt_timestamps_to_vtt() {
+    let srt = "1\n00:00:01,000 --> 00:00:04,000\n第一句\n\n2\n00:00:05,500 --> 00:00:07,000\n第二句\n";
+    let vtt = srt_to_vtt(srt);
+    assert!(vtt.starts_with("WEBVTT"));
+    assert!(vtt.contains("00:00:01.000 --> 00:00:04.000"));
+    assert!(vtt.contains("第二句"));
+  }
 }

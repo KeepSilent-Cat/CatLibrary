@@ -1,7 +1,7 @@
 import {MusicSession} from "@/components/PersistentMusic";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, PanelRight, Play, Settings2, Tag, Trash2, Wallpaper, X } from "lucide-react";
+import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { categoryMeta, RATING_OPTIONS, type CategoryKey, type ContentRating, type LibraryItem } from "@/data/library";
@@ -82,6 +82,12 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const [videoCoverBusy, setVideoCoverBusy] = useState(false);
   const [videoCoverPickerOpen, setVideoCoverPickerOpen] = useState(false);
   const [originalOpen, setOriginalOpen] = useState(false);
+  // 字幕：与视频同目录的外挂字幕（ass/srt/vtt），选中后转成 vtt 交给播放器
+  const [subtitleTracks, setSubtitleTracks] = useState<Array<{ name: string; path: string; format: string }>>([]);
+  const [activeSubtitle, setActiveSubtitle] = useState<string | null>(null);
+  const [subtitleVttUrl, setSubtitleVttUrl] = useState<string | null>(null);
+  const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
+  const [subtitleBusy, setSubtitleBusy] = useState(false);
 
   const refreshLibraryState = async () => {
     const index = filterLibraryIndex(await loadLibraryIndex(resourceRoot), ratingFilter);
@@ -264,11 +270,64 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
           setVideoLoading(false);
         }
       });
-
     return () => {
       cancelled = true;
     };
   }, [currentItem?.id, isVideos, resourceRoot]);
+
+  // 换集或换条目时重新扫描同目录的字幕，并清掉上一条字幕
+  useEffect(() => {
+    if (!isVideos) {
+      return;
+    }
+    const path = videoTracks[videoIndex]?.path;
+    setActiveSubtitle(null);
+    setSubtitleVttUrl(null);
+    setSubtitleMenuOpen(false);
+    if (!path) {
+      setSubtitleTracks([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<Array<{ name: string; path: string; format: string }>>("list_video_subtitles", { videoPath: path })
+      .then((list) => {
+        if (!cancelled) {
+          setSubtitleTracks(list ?? []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSubtitleTracks([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isVideos, videoTracks, videoIndex]);
+
+  // 选中字幕：转成 WebVTT 文本，生成 blob URL 交给 <track>
+  const chooseSubtitle = async (track: { path: string } | null) => {
+    setSubtitleMenuOpen(false);
+    if (subtitleVttUrl) {
+      URL.revokeObjectURL(subtitleVttUrl);
+      setSubtitleVttUrl(null);
+    }
+    if (!track) {
+      setActiveSubtitle(null);
+      return;
+    }
+    setSubtitleBusy(true);
+    try {
+      const vtt = await invoke<string>("load_video_subtitle", { path: track.path });
+      const url = URL.createObjectURL(new Blob([vtt], { type: "text/vtt;charset=utf-8" }));
+      setActiveSubtitle(track.path);
+      setSubtitleVttUrl(url);
+    } catch (currentError) {
+      setSaveError(currentError instanceof Error ? currentError.message : "字幕加载失败");
+    } finally {
+      setSubtitleBusy(false);
+    }
+  };
 
   // 添加标签：去空白、去重
   const addTag = (raw: string) => {
@@ -907,12 +966,23 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     controls
                     playsInline
                     className="mx-auto block max-h-[70vh] w-full object-contain"
+                    onLoadedMetadata={(event) => {
+                      const node = event.currentTarget;
+                      // 字幕轨加载完默认关，这里按当前选择打开
+                      for (let index = 0; index < node.textTracks.length; index += 1) {
+                        node.textTracks[index].mode = subtitleVttUrl ? "showing" : "disabled";
+                      }
+                    }}
                     onEnded={() => {
                       if (videoIndex < videoTracks.length - 1) {
                         setVideoIndex(videoIndex + 1);
                       }
                     }}
-                  />
+                  >
+                    {subtitleVttUrl ? (
+                      <track key={subtitleVttUrl} kind="subtitles" src={subtitleVttUrl} default label="字幕" />
+                    ) : null}
+                  </video>
                 )
               ) : currentItem.coverType === "video" && currentItem.previewMedia ? (
                 <video
@@ -968,6 +1038,59 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     <ImagePlus className="h-3.5 w-3.5" />
                     设置封面
                   </button>
+                ) : null}
+                {isVideos && subtitleTracks.length > 0 ? (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setSubtitleMenuOpen((open) => !open)}
+                      title="选择外挂字幕（与视频同目录的 ass / srt / vtt）"
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs backdrop-blur-sm transition ${
+                        activeSubtitle
+                          ? "border-sky-300/50 bg-sky-300/25 text-sky-50"
+                          : "border-white/24 bg-black/55 text-white/90 hover:bg-black/75 hover:text-white"
+                      }`}
+                    >
+                      <Subtitles className="h-3.5 w-3.5" />
+                      {subtitleBusy ? "加载中…" : activeSubtitle ? "字幕已开" : "字幕"}
+                    </button>
+                    {subtitleMenuOpen ? (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setSubtitleMenuOpen(false)} />
+                        <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-[16px] border border-white/12 bg-black/88 p-2 backdrop-blur-md">
+                          <p className="px-2 py-1 text-[10px] text-white/35">
+                            共 {subtitleTracks.length} 条外挂字幕
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void chooseSubtitle(null)}
+                            className={`flex w-full items-center justify-between rounded-[10px] px-2.5 py-1.5 text-left text-xs transition ${
+                              activeSubtitle ? "text-white/65 hover:bg-white/10" : "bg-sky-300/20 text-sky-50"
+                            }`}
+                          >
+                            关闭字幕
+                          </button>
+                          {subtitleTracks.map((track) => (
+                            <button
+                              key={track.path}
+                              type="button"
+                              onClick={() => void chooseSubtitle(track)}
+                              className={`mt-0.5 flex w-full items-center justify-between gap-2 rounded-[10px] px-2.5 py-1.5 text-left text-xs transition ${
+                                activeSubtitle === track.path
+                                  ? "bg-sky-300/20 text-sky-50"
+                                  : "text-white/70 hover:bg-white/10 hover:text-white"
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1 truncate">{track.name}</span>
+                              <span className="shrink-0 text-[10px] uppercase text-white/35">
+                                {track.format}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                 ) : null}
                 {isVideos && currentItem.coverImage ? (
                   <button
