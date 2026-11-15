@@ -338,3 +338,49 @@ export function blocksFromMarkdown(
   flushParagraph();
   return blocks;
 }
+
+/** 批量建报道的结果项（后端已把素材复制进报道仓库并解析好正文） */
+export interface BatchReportSource {
+  reportId: string;
+  title: string;
+  markdown: string | null;
+  markdownRelativePath: string;
+  root: string;
+  assets: ReportAsset[];
+}
+
+/** 把一个父目录下的每个子文件夹各自建成一篇报道 */
+export async function batchCreateReportsFromFolders(
+  resourceRoot: string,
+  parentFolder: string,
+): Promise<BatchReportSource[]> {
+  const result = await invoke<BatchReportSource[]>("batch_create_reports_from_folders", {
+    resourceRoot,
+    parentFolder,
+  });
+  return result ?? [];
+}
+
+/** 用批量导入的结果生成一篇完整报道（含正文块） */
+export function reportFromBatchSource(source: BatchReportSource): Report {
+  const now = Date.now();
+  const blocks = source.markdown
+    ? blocksFromMarkdown(source.markdown, source.assets, source.markdownRelativePath)
+    : [];
+  return {
+    id: source.reportId,
+    title: source.title,
+    subtitle: "",
+    blocks:
+      blocks.length > 0
+        ? blocks
+        : [
+            { id: rid(), type: "h1", text: source.title },
+            { id: rid(), type: "text", text: "" },
+          ],
+    createdAt: now,
+    updatedAt: now,
+    width: "medium",
+    color: "",
+  };
+}

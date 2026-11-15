@@ -1,8 +1,9 @@
 import {ExtraFavorite,ExtraRating} from "@/components/ExtraFavorite";
-import { ChevronLeft, ChevronRight, FileText, LayoutGrid, List, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, FolderPlus, LayoutGrid, List, Loader2, Plus, Trash2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createReport, deleteReport, loadReports, reportTitle, saveReport, type Report } from "@/lib/reports";
+import { batchCreateReportsFromFolders, createReport, deleteReport, loadReports, reportFromBatchSource, reportTitle, saveReport, type Report } from "@/lib/reports";
 import { useAppStore } from "@/store/useAppStore";
 
 /** 列表卡片封面：取第一个图片块 */
@@ -36,6 +37,7 @@ function readStoredView(): ViewMode {
 
 export default function ReportsPage() {
   const ratings=useAppStore(s=>s.extraRatings),filter=useAppStore(s=>s.ratingFilter);
+  const setExtraRating = useAppStore((state) => state.setExtraRating);
   const navigate = useNavigate();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
   const [allReports, setReports] = useState<Report[]>([]);
@@ -45,6 +47,8 @@ export default function ReportsPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>(readStoredView);
   const [page, setPage] = useState(0);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +97,44 @@ export default function ReportsPage() {
       localStorage.setItem(VIEW_STORAGE_KEY, next);
     } catch {
       // 存不下只影响下次打开时的默认视图
+    }
+  };
+
+  // 批量新建：选一个父目录，里面每个子文件夹各自生成一篇报道（正文.md 自动转成块）
+  const batchCreate = async () => {
+    if (!resourceRoot || batchBusy) {
+      return;
+    }
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: "选择包含多个子文件夹的父目录",
+    });
+    if (!picked || Array.isArray(picked)) {
+      return;
+    }
+    setBatchBusy(true);
+    setError(null);
+    setBatchNotice(null);
+    try {
+      const sources = await batchCreateReportsFromFolders(resourceRoot, String(picked));
+      if (sources.length === 0) {
+        setError("这个目录下没有子文件夹");
+        return;
+      }
+      for (const source of sources) {
+        await saveReport(resourceRoot, reportFromBatchSource(source));
+        // 新报道按当前显示范围打分级，避免建完就看不见
+        setExtraRating(`reports/${source.reportId}`, filter);
+      }
+      const list = await loadReports(resourceRoot);
+      setReports(list);
+      setPage(0);
+      setBatchNotice(`已创建 ${sources.length} 篇报道`);
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : "批量新建失败");
+    } finally {
+      setBatchBusy(false);
     }
   };
 
@@ -177,8 +219,24 @@ export default function ReportsPage() {
             <Plus className="h-3.5 w-3.5" />
             新建报道
           </button>
+          <button
+            type="button"
+            onClick={() => void batchCreate()}
+            disabled={batchBusy}
+            title="选一个父目录，里面的每个子文件夹各自生成一篇报道（自动读 正文.md 并导入图片）"
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/40 bg-emerald-300/15 px-3.5 py-2 text-xs font-medium text-emerald-50 transition hover:bg-emerald-300/25 disabled:opacity-50"
+          >
+            {batchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
+            {batchBusy ? "导入中…" : "批量新建"}
+          </button>
         </div>
       </div>
+
+      {batchNotice ? (
+        <div className="mx-5 mb-2 rounded-[10px] border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-xs text-emerald-50">
+          {batchNotice}
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mx-5 mb-2 rounded-[10px] border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100">

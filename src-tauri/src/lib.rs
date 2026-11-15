@@ -2312,6 +2312,10 @@ fn copy_dir_contents(source: &Path, target: &Path) -> std::io::Result<()> {
       fs::create_dir_all(&to)?;
       copy_dir_contents(&from, &to)?;
     } else {
+      // 目标目录可能还不存在（例如文件夹里第一个就是文件），先补齐父目录
+      if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+      }
       fs::copy(&from, &to)?;
     }
   }
@@ -2728,6 +2732,7 @@ fn import_report_folder(
     index += 1;
   }
 
+  fs::create_dir_all(&target).map_err(|error| error.to_string())?;
   copy_dir_contents(&source, &target).map_err(|error| error.to_string())?;
 
   let mut assets = Vec::new();
@@ -3698,6 +3703,7 @@ pub fn run() {
       extract_comic_chapter,
       delete_comic_chapter,
       delete_library_item,
+      batch_create_reports_from_folders,
       list_video_subtitles,
       list_video_danmaku,
       load_video_danmaku,
@@ -4549,5 +4555,142 @@ mod danmaku_tests {
     assert_eq!(items[1].mode, 5);
     assert_eq!(items[1].color, "#ff0000");
     assert_eq!(items[1].text, "顶部红色");
+  }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchReportItem {
+  report_id: String,
+  title: String,
+  /// 正文 markdown（没有就是 None）
+  markdown: Option<String>,
+  /// markdown 相对导入根目录的路径，用于解析图片引用
+  markdown_relative_path: String,
+  root: String,
+  assets: Vec<ReportAssetPayload>,
+}
+
+/// 批量建报道：把一个父目录下的每个子文件夹，各自建成一篇报道并导入素材。
+#[tauri::command]
+fn batch_create_reports_from_folders(
+  resource_root: String,
+  parent_folder: String,
+) -> Result<Vec<BatchReportItem>, String> {
+  let root = PathBuf::from(&resource_root);
+  let parent = PathBuf::from(&parent_folder);
+  if !parent.is_dir() {
+    return Err("请选择一个包含多个子文件夹的目录".to_string());
+  }
+
+  let mut folders: Vec<PathBuf> = fs::read_dir(&parent)
+    .map_err(|error| error.to_string())?
+    .flatten()
+    .map(|entry| entry.path())
+    .filter(|path| path.is_dir())
+    .collect();
+  folders.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+  if folders.is_empty() {
+    return Err("这个目录下没有子文件夹".to_string());
+  }
+
+  let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|value| value.as_millis() as u64)
+    .unwrap_or_default();
+
+  let mut results = Vec::new();
+  for (index, folder) in folders.iter().enumerate() {
+    let title = folder
+      .file_name()
+      .map(|name| name.to_string_lossy().to_string())
+      .unwrap_or_else(|| format!("报道 {}", index + 1));
+    let report_id = format!("{:x}-{:04x}", stamp, index + 1);
+
+    let source_root = report_dir(&root, &report_id).join("source");
+    fs::create_dir_all(&source_root).map_err(|error| error.to_string())?;
+    let target = source_root.join(&title);
+    fs::create_dir_all(&target).map_err(|error| error.to_string())?;
+    copy_dir_contents(folder, &target).map_err(|error| error.to_string())?;
+
+    let mut assets = Vec::new();
+    collect_report_assets(&target, &target, &mut assets)?;
+
+    // 找正文：优先「正文.md」，否则取根目录第一个 md
+    let mut markdown: Option<String> = None;
+    let mut markdown_relative_path = String::new();
+    let preferred = target.join("正文.md");
+    let md_path = if preferred.is_file() {
+      Some(preferred)
+    } else {
+      fs::read_dir(&target).ok().and_then(|entries| {
+        entries
+          .flatten()
+          .map(|entry| entry.path())
+          .find(|path| path.is_file() && has_extension(path, &["md", "markdown"]))
+      })
+    };
+    if let Some(path) = md_path {
+      if let Ok(bytes) = fs::read(&path) {
+        markdown = Some(decode_text_bytes(&bytes));
+        markdown_relative_path = path
+          .strip_prefix(&target)
+          .map(|value| value.to_string_lossy().replace('\\', "/"))
+          .unwrap_or_default();
+      }
+    }
+
+    results.push(BatchReportItem {
+      report_id,
+      title,
+      markdown,
+      markdown_relative_path,
+      root: path_to_string(target),
+      assets,
+    });
+  }
+
+  Ok(results)
+}
+
+#[cfg(test)]
+mod batch_report_tests {
+  use super::*;
+
+  #[test]
+  fn creates_one_report_per_subfolder() {
+    let root = std::env::temp_dir().join(format!("catlib-batch-report-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let parent = root.join("parent");
+    for name in ["set-a", "set-b"] {
+      let dir = parent.join(name);
+      fs::create_dir_all(dir.join("pics")).expect("mkdir");
+      fs::write(dir.join("body.md"), "# title\n\n![](pics/01.jpg)\n").expect("md");
+      fs::write(dir.join("pics").join("01.jpg"), vec![7u8; 16]).expect("jpg");
+    }
+
+    let items = batch_create_reports_from_folders(
+      root.to_string_lossy().to_string(),
+      parent.to_string_lossy().to_string(),
+    )
+    .expect("batch");
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].title, "set-a");
+    assert_eq!(items[1].title, "set-b");
+    assert_eq!(items[0].markdown_relative_path, "body.md");
+    assert!(items[0]
+      .markdown
+      .as_deref()
+      .expect("markdown")
+      .contains("pics/01.jpg"));
+    assert!(items[0].assets.iter().any(|asset| asset.relative_path.ends_with("01.jpg")));
+    // 素材已经实际复制进报道仓库
+    assert!(Path::new(&items[0].root).join("body.md").is_file());
+    assert!(Path::new(&items[0].root).join("pics").join("01.jpg").is_file());
+    // 每个子文件夹拿到的 id 不同
+    assert_ne!(items[0].report_id, items[1].report_id);
+
+    let _ = fs::remove_dir_all(&root);
   }
 }
