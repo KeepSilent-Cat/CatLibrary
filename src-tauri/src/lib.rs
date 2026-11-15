@@ -3704,6 +3704,7 @@ pub fn run() {
       delete_comic_chapter,
       delete_library_item,
       batch_create_reports_from_folders,
+      read_report_markdown,
       list_video_subtitles,
       list_video_danmaku,
       load_video_danmaku,
@@ -4693,4 +4694,63 @@ mod batch_report_tests {
 
     let _ = fs::remove_dir_all(&root);
   }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportMarkdownPayload {
+  text: String,
+  relative_path: String,
+}
+
+/// 读取某篇报道自带的正文 markdown（用于重建内容块）
+#[tauri::command]
+fn read_report_markdown(
+  resource_root: String,
+  report_id: String,
+) -> Result<Option<ReportMarkdownPayload>, String> {
+  let root = PathBuf::from(&resource_root);
+  let source_root = report_dir(&root, &report_id).join("source");
+  if !source_root.is_dir() {
+    return Ok(None);
+  }
+
+  // 优先「正文.md」，否则取第一个 .md
+  let mut best: Option<PathBuf> = None;
+  let mut fallback: Option<PathBuf> = None;
+  fn walk(dir: &Path, best: &mut Option<PathBuf>, fallback: &mut Option<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if path.is_dir() {
+        walk(&path, best, fallback);
+      } else if has_extension(&path, &["md", "markdown"]) {
+        let is_preferred = path
+          .file_name()
+          .and_then(|name| name.to_str())
+          .map(|name| name == "正文.md")
+          .unwrap_or(false);
+        if is_preferred && best.is_none() {
+          *best = Some(path);
+        } else if fallback.is_none() {
+          *fallback = Some(path);
+        }
+      }
+    }
+  }
+  walk(&source_root, &mut best, &mut fallback);
+
+  let Some(path) = best.or(fallback) else {
+    return Ok(None);
+  };
+  let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+  let base = report_dir(&root, &report_id).join("source");
+  let relative_path = path
+    .strip_prefix(&base)
+    .map(|value| value.to_string_lossy().replace('\\', "/"))
+    .unwrap_or_else(|_| "正文.md".to_string());
+  Ok(Some(ReportMarkdownPayload {
+    text: decode_text_bytes(&bytes),
+    relative_path,
+  }))
 }

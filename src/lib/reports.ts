@@ -267,6 +267,30 @@ export function blocksFromMarkdown(
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
   let paragraph: string[] = [];
 
+  // 记录正文里已经引用过的素材，剩下的批量导入时补到末尾
+  const usedAssets = new Set<string>();
+  const MEDIA_EXT = /\.(mp4|mkv|mov|webm|m4v|ts|m2ts|mp3|flac|wav|m4a|ogg|opus)$/i;
+
+  const resolveMedia = (ref: string): ReportAsset | undefined => {
+    const cleaned = decodeURIComponent(ref.trim().replace(/^\.\//, "").replace(/\*\*/g, ""));
+    const candidate = normalizeRelative(baseDir ? `${baseDir}/${cleaned}` : cleaned);
+    return assetMap.get(candidate) ?? assetMap.get(normalizeRelative(cleaned));
+  };
+
+  const pushMediaBlock = (asset: ReportAsset, type: "image" | "video" | "audio") => {
+    usedAssets.add(normalizeRelative(asset.relativePath));
+    blocks.push({
+      id: rid(),
+      type,
+      media: {
+        category: "report",
+        itemId: asset.relativePath,
+        path: assetUrl(asset),
+        title: asset.name,
+      },
+    });
+  };
+
   const flushParagraph = () => {
     const text = paragraph.join("\n").trim();
     paragraph = [];
@@ -288,18 +312,26 @@ export function blocksFromMarkdown(
       flushParagraph();
       const asset = resolveImage(imageMatch[1]);
       if (asset) {
-        blocks.push({
-          id: rid(),
-          type: "image",
-          media: {
-            category: "report",
-            itemId: asset.relativePath,
-            path: assetUrl(asset),
-            title: asset.name,
-          },
-        });
+        // 用图片语法引用视频/音频时，按真实类型出块，避免变成一个加载不出来的 <img>
+        pushMediaBlock(
+          asset,
+          asset.kind === "video" ? "video" : asset.kind === "audio" ? "audio" : "image",
+        );
       }
       continue;
+    }
+
+    // 「**视频**：视频/01.mp4」这种写法，或者干脆一行只写了媒体相对路径
+    const mediaMatch = line.match(
+      /^(?:\*\*(?:视频|音频|语音|录像)\*\*\s*[：:]\s*)?(.+?\.(?:mp4|mkv|mov|webm|m4v|ts|m2ts|mp3|flac|wav|m4a|ogg|opus))$/i,
+    );
+    if (mediaMatch) {
+      const asset = resolveMedia(mediaMatch[1]);
+      if (asset && (asset.kind === "video" || asset.kind === "audio")) {
+        flushParagraph();
+        pushMediaBlock(asset, asset.kind === "video" ? "video" : "audio");
+        continue;
+      }
     }
 
     if (/^-{3,}$/.test(line)) {
@@ -367,6 +399,32 @@ export function reportFromBatchSource(source: BatchReportSource): Report {
   const blocks = source.markdown
     ? blocksFromMarkdown(source.markdown, source.assets, source.markdownRelativePath)
     : [];
+
+  // 正文里没引用到的视频/音频/图片补在末尾，避免「文件夹里有但报道里看不到」
+  const referenced = new Set(
+    blocks
+      .map((block) => block.media?.itemId)
+      .filter((value): value is string => Boolean(value))
+      .map((value) => normalizeRelative(value)),
+  );
+  const leftovers = source.assets
+    .filter((asset) => !referenced.has(normalizeRelative(asset.relativePath)))
+    .filter((asset) => asset.kind === "video" || asset.kind === "audio" || asset.kind === "image")
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+  for (const asset of leftovers) {
+    blocks.push({
+      id: rid(),
+      type: asset.kind === "video" ? "video" : asset.kind === "audio" ? "audio" : "image",
+      media: {
+        category: "report",
+        itemId: asset.relativePath,
+        path: assetUrl(asset),
+        title: asset.name,
+      },
+    });
+  }
+
   return {
     id: source.reportId,
     title: source.title,
@@ -383,4 +441,16 @@ export function reportFromBatchSource(source: BatchReportSource): Report {
     width: "medium",
     color: "",
   };
+}
+
+/** 读取某篇报道自带的正文 markdown（用于重建内容块） */
+export async function readReportMarkdown(
+  resourceRoot: string,
+  reportId: string,
+): Promise<{ text: string; relativePath: string } | null> {
+  const result = await invoke<{ text: string; relativePath: string } | null>("read_report_markdown", {
+    resourceRoot,
+    reportId,
+  });
+  return result ?? null;
 }

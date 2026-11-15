@@ -1,9 +1,9 @@
 import {ExtraFavorite,ExtraRating} from "@/components/ExtraFavorite";
-import { ChevronLeft, ChevronRight, FileText, FolderPlus, LayoutGrid, List, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, FolderPlus, LayoutGrid, List, Loader2, Plus, Trash2, Wrench } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { batchCreateReportsFromFolders, createReport, deleteReport, loadReports, reportFromBatchSource, reportTitle, saveReport, type Report } from "@/lib/reports";
+import { batchCreateReportsFromFolders, createReport, deleteReport, listReportAssets, loadReports, readReportMarkdown, reportFromBatchSource, reportTitle, saveReport, type Report } from "@/lib/reports";
 import { useAppStore } from "@/store/useAppStore";
 
 /** 列表卡片封面：取第一个图片块 */
@@ -138,6 +138,48 @@ export default function ReportsPage() {
     }
   };
 
+  // 修复：把已有报道按自带 markdown 重新生成内容块（补上之前漏掉的视频块）
+  const repairReports = async () => {
+    if (!resourceRoot || batchBusy) {
+      return;
+    }
+    setBatchBusy(true);
+    setError(null);
+    setBatchNotice(null);
+    try {
+      let fixed = 0;
+      for (const report of allReports) {
+        const markdown = await readReportMarkdown(resourceRoot, report.id);
+        if (!markdown) {
+          continue;
+        }
+        const assets = await listReportAssets(resourceRoot, report.id);
+        const hasVideoAsset = assets.some((asset) => asset.kind === "video");
+        const hasVideoBlock = report.blocks.some((block) => block.type === "video");
+        if (!hasVideoAsset || hasVideoBlock) {
+          continue;
+        }
+        const rebuilt = reportFromBatchSource({
+          reportId: report.id,
+          title: report.title,
+          markdown: markdown.text,
+          markdownRelativePath: markdown.relativePath,
+          root: "",
+          assets,
+        });
+        await saveReport(resourceRoot, { ...report, blocks: rebuilt.blocks, updatedAt: Date.now() });
+        fixed += 1;
+      }
+      const list = await loadReports(resourceRoot);
+      setReports(list);
+      setBatchNotice(fixed > 0 ? `已修复 ${fixed} 篇报道的视频块` : "没有需要修复的报道");
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : "修复失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
   const createNew = async () => {
     if(filter<2){setError("新增报道默认18+，请先在设置解锁显示全部后创建。");return;}
     const report = createReport();
@@ -228,6 +270,16 @@ export default function ReportsPage() {
           >
             {batchBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
             {batchBusy ? "导入中…" : "批量新建"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void repairReports()}
+            disabled={batchBusy}
+            title="按每篇报道自带的 正文.md 重新生成内容块，补上之前漏掉的视频（没有视频的可跳过）"
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/16 bg-white/8 px-3.5 py-2 text-xs text-white/70 transition hover:bg-white/16 disabled:opacity-50"
+          >
+            <Wrench className="h-3.5 w-3.5" />
+            修复视频块
           </button>
         </div>
       </div>
