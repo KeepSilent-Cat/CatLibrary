@@ -83,6 +83,10 @@ interface AppState {
   tagFilters: Record<string, string[]>;
   // 卡片信息密度：完整 / 紧凑 / 隐藏（全局统一）
   cardInfoMode: CardInfoMode;
+  danmakuEnabled: boolean;
+  danmakuOpacity: number;
+  danmakuFontSize: number;
+  danmakuSpeed: number;
   // 截图：快捷键（如 "ctrl+shift+s"）、打开状态、保存成功提示
   screenshotShortcut: string;
   screenshotOpen: boolean;
@@ -116,6 +120,10 @@ interface AppState {
   toggleTagFilter: (scope: string, tag: string) => void;
   clearTagFilter: (scope: string) => void;
   setCardInfoMode: (value: CardInfoMode) => void;
+  setDanmakuEnabled: (value: boolean) => void;
+  setDanmakuOpacity: (value: number) => void;
+  setDanmakuFontSize: (value: number) => void;
+  setDanmakuSpeed: (value: number) => void;
   setScreenshotShortcut: (value: string) => void;
   setAutoPlaySpeed: (value: number) => void;
   setChapterDelay: (value: number) => void;
@@ -175,6 +183,14 @@ export const useAppStore = create<AppState>()(
       ratingFilter: 0,
       tagFilters: {},
       cardInfoMode: "compact",
+      danmakuEnabled: true,
+      danmakuOpacity: 0.9,
+      danmakuFontSize: 22,
+      danmakuSpeed: 1,
+      setDanmakuEnabled: (value) => set({ danmakuEnabled: value }),
+      setDanmakuOpacity: (value) => set({ danmakuOpacity: value }),
+      setDanmakuFontSize: (value) => set({ danmakuFontSize: value }),
+      setDanmakuSpeed: (value) => set({ danmakuSpeed: value }),
       screenshotShortcut: "ctrl+shift+s",
       screenshotOpen: false,
       screenshotTarget: { type: "library" },

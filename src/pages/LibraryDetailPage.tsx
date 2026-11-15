@@ -1,7 +1,7 @@
 import {MusicSession} from "@/components/PersistentMusic";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
+import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, MessageCircle, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { categoryMeta, RATING_OPTIONS, type CategoryKey, type ContentRating, type LibraryItem } from "@/data/library";
@@ -11,6 +11,7 @@ import { type MusicTrack } from "@/components/MusicPlayer";
 import ImageCoverPicker from "@/components/ImageCoverPicker";
 import Live2DPanel from "@/components/Live2DPanel";
 import NovelReader from "@/components/NovelReader";
+import DanmakuOverlay, { type DanmakuItem } from "@/components/DanmakuOverlay";
 import OriginalImageViewer from "@/components/OriginalImageViewer";
 
 function pathBaseName(path: string): string {
@@ -30,6 +31,14 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const navigate = useNavigate();
   const { itemId } = useParams();
   const resourceRoot = useAppStore((state) => state.resourceRoot);
+  const danmakuEnabled = useAppStore((state) => state.danmakuEnabled);
+  const danmakuOpacity = useAppStore((state) => state.danmakuOpacity);
+  const danmakuFontSize = useAppStore((state) => state.danmakuFontSize);
+  const danmakuSpeed = useAppStore((state) => state.danmakuSpeed);
+  const setDanmakuEnabled = useAppStore((state) => state.setDanmakuEnabled);
+  const setDanmakuOpacity = useAppStore((state) => state.setDanmakuOpacity);
+  const setDanmakuFontSize = useAppStore((state) => state.setDanmakuFontSize);
+  const setDanmakuSpeed = useAppStore((state) => state.setDanmakuSpeed);
   const ratingFilter = useAppStore((state) => state.ratingFilter);
   const openGameCoverScreenshot = useAppStore((state) => state.openGameCoverScreenshot);
   const coverRefreshSignal = useAppStore((state) => state.coverRefreshSignal);
@@ -88,6 +97,12 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const [subtitleVttUrl, setSubtitleVttUrl] = useState<string | null>(null);
   const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
   const [subtitleBusy, setSubtitleBusy] = useState(false);
+  // 弹幕：与视频同目录的 b 站 XML
+  const [danmakuTracks, setDanmakuTracks] = useState<Array<{ name: string; path: string }>>([]);
+  const [activeDanmaku, setActiveDanmaku] = useState<string | null>(null);
+  const [danmakuItems, setDanmakuItems] = useState<DanmakuItem[]>([]);
+  const [danmakuMenuOpen, setDanmakuMenuOpen] = useState(false);
+  const [danmakuBusy, setDanmakuBusy] = useState(false);
 
   const refreshLibraryState = async () => {
     const index = filterLibraryIndex(await loadLibraryIndex(resourceRoot), ratingFilter);
@@ -304,6 +319,55 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
       cancelled = true;
     };
   }, [isVideos, videoTracks, videoIndex]);
+
+  // 换集或换条目时重新扫描同目录的弹幕 XML
+  useEffect(() => {
+    if (!isVideos) {
+      return;
+    }
+    const path = videoTracks[videoIndex]?.path;
+    setActiveDanmaku(null);
+    setDanmakuItems([]);
+    setDanmakuMenuOpen(false);
+    if (!path) {
+      setDanmakuTracks([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<Array<{ name: string; path: string }>>("list_video_danmaku", { videoPath: path })
+      .then((list) => {
+        if (!cancelled) {
+          setDanmakuTracks(list ?? []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDanmakuTracks([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isVideos, videoTracks, videoIndex]);
+
+  const chooseDanmaku = async (track: { path: string } | null) => {
+    setDanmakuMenuOpen(false);
+    if (!track) {
+      setActiveDanmaku(null);
+      setDanmakuItems([]);
+      return;
+    }
+    setDanmakuBusy(true);
+    try {
+      const items = await invoke<DanmakuItem[]>("load_video_danmaku", { path: track.path });
+      setActiveDanmaku(track.path);
+      setDanmakuItems(items ?? []);
+    } catch (currentError) {
+      setSaveError(currentError instanceof Error ? currentError.message : "弹幕加载失败");
+    } finally {
+      setDanmakuBusy(false);
+    }
+  };
 
   // 选中字幕：转成 WebVTT 文本，生成 blob URL 交给 <track>
   const chooseSubtitle = async (track: { path: string } | null) => {
@@ -956,6 +1020,15 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     正在读取视频列表…
                   </div>
                 ) : (
+                  <div className="relative">
+                  <DanmakuOverlay
+                    videoRef={videoFrameRef}
+                    items={danmakuItems}
+                    enabled={danmakuEnabled && Boolean(activeDanmaku)}
+                    opacity={danmakuOpacity}
+                    fontSize={danmakuFontSize}
+                    speed={danmakuSpeed}
+                  />
                   <video crossOrigin="anonymous" ref={videoFrameRef}
                     key={videoTracks[videoIndex]?.path ?? currentItem.previewMedia ?? "empty"}
                     src={
@@ -983,6 +1056,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                       <track key={subtitleVttUrl} kind="subtitles" src={subtitleVttUrl} default label="字幕" />
                     ) : null}
                   </video>
+                  </div>
                 )
               ) : currentItem.coverType === "video" && currentItem.previewMedia ? (
                 <video
@@ -1038,6 +1112,106 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                     <ImagePlus className="h-3.5 w-3.5" />
                     设置封面
                   </button>
+                ) : null}
+                {isVideos && danmakuTracks.length > 0 ? (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setDanmakuMenuOpen((open) => !open)}
+                      title="b 站弹幕（与视频同目录的 XML）"
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs backdrop-blur-sm transition ${
+                        activeDanmaku && danmakuEnabled
+                          ? "border-amber-300/50 bg-amber-300/25 text-amber-50"
+                          : "border-white/24 bg-black/55 text-white/90 hover:bg-black/75 hover:text-white"
+                      }`}
+                    >
+                      <MessageCircle className="h-3.5 w-3.5" />
+                      {danmakuBusy
+                        ? "加载中…"
+                        : activeDanmaku
+                          ? `弹幕 ${danmakuItems.length}`
+                          : "弹幕"}
+                    </button>
+                    {danmakuMenuOpen ? (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setDanmakuMenuOpen(false)} />
+                        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-[16px] border border-white/12 bg-black/88 p-3 text-white backdrop-blur-md">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-white/70">显示弹幕</span>
+                            <button
+                              type="button"
+                              onClick={() => setDanmakuEnabled(!danmakuEnabled)}
+                              className={`rounded-full border px-3 py-1 text-[11px] transition ${
+                                danmakuEnabled
+                                  ? "border-amber-300/50 bg-amber-300/20 text-amber-50"
+                                  : "border-white/16 bg-white/8 text-white/60"
+                              }`}
+                            >
+                              {danmakuEnabled ? "开" : "关"}
+                            </button>
+                          </div>
+
+                          {[
+                            { label: "不透明度", value: danmakuOpacity, min: 0.2, max: 1, step: 0.05, apply: setDanmakuOpacity },
+                            { label: "字号", value: danmakuFontSize, min: 14, max: 34, step: 1, apply: setDanmakuFontSize },
+                            { label: "速度", value: danmakuSpeed, min: 0.5, max: 2, step: 0.1, apply: setDanmakuSpeed },
+                          ].map((control) => (
+                            <label key={control.label} className="mt-2 block">
+                              <span className="flex items-center justify-between text-[10px] text-white/40">
+                                <span>{control.label}</span>
+                                <span className="tabular-nums">
+                                  {control.label === "不透明度"
+                                    ? `${Math.round(control.value * 100)}%`
+                                    : control.label === "速度"
+                                      ? `${control.value.toFixed(1)}x`
+                                      : `${control.value}px`}
+                                </span>
+                              </span>
+                              <input
+                                type="range"
+                                min={control.min}
+                                max={control.max}
+                                step={control.step}
+                                value={control.value}
+                                onChange={(event) => control.apply(Number(event.target.value))}
+                                className="mt-1 w-full accent-amber-300"
+                              />
+                            </label>
+                          ))}
+
+                          <div className="mt-3 max-h-[132px] overflow-y-auto border-t border-white/10 pt-2">
+                            <p className="pb-1 text-[10px] text-white/35">
+                              弹幕文件（{danmakuTracks.length} 个）
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => void chooseDanmaku(null)}
+                              className={`flex w-full items-center rounded-[8px] px-2 py-1 text-left text-[11px] transition ${
+                                activeDanmaku ? "text-white/60 hover:bg-white/10" : "bg-amber-300/20 text-amber-50"
+                              }`}
+                            >
+                              关闭弹幕
+                            </button>
+                            {danmakuTracks.map((track) => (
+                              <button
+                                key={track.path}
+                                type="button"
+                                onClick={() => void chooseDanmaku(track)}
+                                className={`mt-0.5 flex w-full items-center justify-between gap-2 rounded-[8px] px-2 py-1 text-left text-[11px] transition ${
+                                  activeDanmaku === track.path
+                                    ? "bg-amber-300/20 text-amber-50"
+                                    : "text-white/70 hover:bg-white/10"
+                                }`}
+                              >
+                                <span className="min-w-0 flex-1 truncate">{track.name}</span>
+                                <span className="shrink-0 text-[9px] uppercase text-white/30">xml</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                 ) : null}
                 {isVideos && subtitleTracks.length > 0 ? (
                   <div className="relative">

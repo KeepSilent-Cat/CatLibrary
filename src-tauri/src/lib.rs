@@ -3699,6 +3699,8 @@ pub fn run() {
       delete_comic_chapter,
       delete_library_item,
       list_video_subtitles,
+      list_video_danmaku,
+      load_video_danmaku,
       load_video_subtitle,
       mobile_server::start_mobile_access,
       mobile_server::stop_mobile_access,
@@ -4383,5 +4385,169 @@ mod subtitle_tests {
     assert!(vtt.starts_with("WEBVTT"));
     assert!(vtt.contains("00:00:01.000 --> 00:00:04.000"));
     assert!(vtt.contains("第二句"));
+  }
+}
+
+/* ---------------- 弹幕（bilibili XML） ---------------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DanmakuTrackPayload {
+  name: String,
+  path: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DanmakuItem {
+  /// 出现时间（秒）
+  time: f64,
+  /// 1-3 滚动、4 底部、5 顶部、6 逆向滚动
+  mode: u8,
+  /// 字号（b 站默认 25）
+  size: u8,
+  /// #rrggbb
+  color: String,
+  text: String,
+}
+
+/// 列出与视频同目录的弹幕 XML（同名优先）
+#[tauri::command]
+fn list_video_danmaku(video_path: String) -> Result<Vec<DanmakuTrackPayload>, String> {
+  let path = PathBuf::from(&video_path);
+  let dir = path.parent().ok_or_else(|| "视频路径不合法".to_string())?;
+  let stem = path
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .unwrap_or_default()
+    .to_string();
+
+  let mut tracks: Vec<DanmakuTrackPayload> = Vec::new();
+  let entries = fs::read_dir(dir).map_err(|error| error.to_string())?;
+  for entry in entries.flatten() {
+    let file = entry.path();
+    if !file.is_file() || !has_extension(&file, &["xml"]) {
+      continue;
+    }
+    // 只认 b 站弹幕格式，避免把别的 xml 当弹幕
+    let Ok(head) = fs::read_to_string(&file) else { continue };
+    if !head.contains("<i>") || !head.contains("<d p=") {
+      continue;
+    }
+    let name = file
+      .file_stem()
+      .and_then(|value| value.to_str())
+      .unwrap_or("弹幕")
+      .to_string();
+    tracks.push(DanmakuTrackPayload {
+      name,
+      path: path_to_string(file),
+    });
+  }
+  tracks.sort_by(|left, right| {
+    let left_same = !stem.is_empty() && left.name == stem;
+    let right_same = !stem.is_empty() && right.name == stem;
+    right_same
+      .cmp(&left_same)
+      .then_with(|| left.name.cmp(&right.name))
+  });
+  Ok(tracks)
+}
+
+/// 解析 b 站弹幕 XML：p="时间,模式,字号,颜色,时间戳,池,用户,行号"，正文在标签之间
+#[tauri::command]
+fn load_video_danmaku(path: String) -> Result<Vec<DanmakuItem>, String> {
+  let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+  let text = decode_text_bytes(&bytes);
+  Ok(parse_danmaku_xml(&text))
+}
+
+/// 解析 b 站弹幕 XML（拆出来便于单测）
+fn parse_danmaku_xml(text: &str) -> Vec<DanmakuItem> {
+  let mut items: Vec<DanmakuItem> = Vec::new();
+
+  for chunk in text.split("<d p=\"").skip(1) {
+    let Some((attrs, rest)) = chunk.split_once("\">") else { continue };
+    let Some(body) = rest.split_once("</d>").map(|pair| pair.0) else { continue };
+
+    let fields: Vec<&str> = attrs.split(',').collect();
+    if fields.len() < 4 {
+      continue;
+    }
+    let time = fields[0].parse::<f64>().unwrap_or(-1.0);
+    if !(0.0..=86400.0).contains(&time) {
+      continue;
+    }
+    let mode = fields[1].parse::<u8>().unwrap_or(1);
+    if !(1..=6).contains(&mode) {
+      continue;
+    }
+    let size = fields[2].parse::<u8>().unwrap_or(25).clamp(12, 48);
+    let color_value = fields[3].parse::<u32>().unwrap_or(0xFFFFFF);
+    let color = format!(
+      "#{:02x}{:02x}{:02x}",
+      (color_value >> 16) & 0xFF,
+      (color_value >> 8) & 0xFF,
+      color_value & 0xFF
+    );
+    let content = unescape_xml(body).trim().to_string();
+    if content.is_empty() {
+      continue;
+    }
+    items.push(DanmakuItem {
+      time,
+      mode,
+      size,
+      color,
+      text: content,
+    });
+  }
+
+  items.sort_by(|left, right| left.time.partial_cmp(&right.time).unwrap_or(std::cmp::Ordering::Equal));
+  // 太密集时抽样，避免一次塞给前端几万条
+  const MAX_ITEMS: usize = 20000;
+  if items.len() > MAX_ITEMS {
+    let step = items.len() as f64 / MAX_ITEMS as f64;
+    let mut sampled = Vec::with_capacity(MAX_ITEMS);
+    let mut cursor = 0.0f64;
+    while (cursor as usize) < items.len() && sampled.len() < MAX_ITEMS {
+      sampled.push(items[cursor as usize].clone());
+      cursor += step;
+    }
+    return sampled;
+  }
+  items
+}
+
+fn unescape_xml(raw: &str) -> String {
+  raw
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+    .replace("&quot;", "\"")
+    .replace("&apos;", "'")
+    .replace("&amp;", "&")
+}
+
+#[cfg(test)]
+mod danmaku_tests {
+  use super::*;
+
+  #[test]
+  fn parses_bilibili_xml() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?><i><chatserver>chat.bilibili.com</chatserver>
+<d p="12.5,1,25,16777215,1700000000,0,abc,1">第一条 &amp; 带转义</d>
+<d p="30.25,5,18,16711680,1700000001,0,def,2">顶部红色</d>
+<d p="40,7,25,0,1700000002,0,ghi,3">高级弹幕要忽略</d>
+<d p="50,1,25,0,1700000003,0,jkl,4"></d>
+</i>"#;
+    let items = parse_danmaku_xml(xml);
+    assert_eq!(items.len(), 2);
+    assert!((items[0].time - 12.5).abs() < 0.001);
+    assert_eq!(items[0].mode, 1);
+    assert_eq!(items[0].color, "#ffffff");
+    assert_eq!(items[0].text, "第一条 & 带转义");
+    assert_eq!(items[1].mode, 5);
+    assert_eq!(items[1].color, "#ff0000");
+    assert_eq!(items[1].text, "顶部红色");
   }
 }
