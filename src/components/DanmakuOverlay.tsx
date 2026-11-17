@@ -127,17 +127,31 @@ export default function DanmakuOverlay({ videoRef, items, enabled, opacity, font
       active.push({ node, startTime: now, duration, width, lane, scroll });
     };
 
+    // 固定弹幕（顶部/底部）也要占行，否则同一时刻的多条会叠在一起
     const pickLane = (mode: number): number => {
       const now = video.currentTime;
       if (mode === 5) {
-        return 0; // 顶部
+        for (let index = 0; index < rows; index += 1) {
+          if (laneFree[index] <= now) {
+            laneFree[index] = now + 4;
+            return index;
+          }
+        }
+        return -1;
       }
       if (mode === 4) {
-        return rows - 1; // 底部
+        for (let index = rows - 1; index >= 0; index -= 1) {
+          if (laneFree[index] <= now) {
+            laneFree[index] = now + 4;
+            return index;
+          }
+        }
+        return -1;
       }
+      // 滚动弹幕：优先选最久没被占用的轨道
       let best = -1;
       let bestFree = Number.POSITIVE_INFINITY;
-      for (let index = 1; index < rows; index += 1) {
+      for (let index = 0; index < rows; index += 1) {
         if (laneFree[index] <= now && laneFree[index] < bestFree) {
           best = index;
           bestFree = laneFree[index];
@@ -146,7 +160,7 @@ export default function DanmakuOverlay({ videoRef, items, enabled, opacity, font
       if (best < 0) {
         return -1;
       }
-      laneFree[best] = now + 1.2;
+      laneFree[best] = now + 1.8;
       return best;
     };
 

@@ -1025,7 +1025,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                 loadingTracks={musicLoading}
               />
             ) : (
-              <div className="relative overflow-hidden rounded-[28px] bg-black/16">
+              <div className="relative rounded-[28px] bg-black/16">
 
               {isVideos && videoTracks.length > 0 ? (
                 <div className="flex items-center gap-2 overflow-x-auto border-b border-white/10 bg-black/55 px-3 py-2">
@@ -1139,10 +1139,77 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                   className="block h-auto w-full cursor-zoom-in"
                 />
               ) : (
-                <div className="h-[52vh] min-h-[320px] w-full bg-[linear-gradient(145deg,rgba(31,41,55,0.94),rgba(15,23,42,0.96),rgba(24,24,27,0.96))]" />
+                <div className="h-[52vh] min-h-[320px] w-full rounded-[24px] bg-[linear-gradient(145deg,rgba(31,41,55,0.94),rgba(15,23,42,0.96),rgba(24,24,27,0.96))]" />
               )}
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/78 via-black/12 to-black/22" />
               <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+                {isVideos ? (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setMoreOpen((open) => !open)}
+                      title="更多操作（封面 / 删除）"
+                      className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/24 bg-black/55 px-3 text-xs text-white/85 backdrop-blur-sm transition hover:bg-black/75 hover:text-white"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                      更多
+                    </button>
+                    {moreOpen ? (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                        <div className="absolute right-0 top-full z-[60] mt-2 w-56 rounded-[14px] border border-white/12 bg-black/92 p-1.5 backdrop-blur-md">
+                          <button
+                            type="button"
+                            disabled={videoCoverBusy}
+                            onClick={() => {
+                              setMoreOpen(false);
+                              void setCoverFromFrame();
+                            }}
+                            className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-white/80 transition hover:bg-white/10 disabled:opacity-40"
+                          >
+                            <Camera className="h-3.5 w-3.5" /> 用当前画面做封面
+                          </button>
+                          <button
+                            type="button"
+                            disabled={videoCoverBusy}
+                            onClick={() => {
+                              setMoreOpen(false);
+                              void openVideoCoverPicker();
+                            }}
+                            className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-white/80 transition hover:bg-white/10 disabled:opacity-40"
+                          >
+                            <ImagePlus className="h-3.5 w-3.5" /> 从图片库选封面
+                          </button>
+                          {currentItem.coverImage ? (
+                            <button
+                              type="button"
+                              disabled={videoCoverBusy}
+                              onClick={() => {
+                                setMoreOpen(false);
+                                void handleDeleteVideoCover();
+                              }}
+                              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-white/80 transition hover:bg-white/10 disabled:opacity-40"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> 移除封面
+                            </button>
+                          ) : null}
+                          <div className="my-1 h-px bg-white/10" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMoreOpen(false);
+                              void handleDelete();
+                            }}
+                            className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-rose-200 transition hover:bg-rose-300/15"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {deleting ? "再点一次确认删除" : "删除这个条目"}
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 {currentItem.coverImage ? (
                   <button
                     type="button"
