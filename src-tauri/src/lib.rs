@@ -3746,6 +3746,9 @@ pub fn run() {
       list_video_danmaku,
       load_video_danmaku,
       load_video_subtitle,
+      list_live2d_base_images,
+      load_live2d_annotation,
+      save_live2d_annotation,
       mobile_server::start_mobile_access,
       mobile_server::update_mobile_filter,
       mobile_server::stop_mobile_access,
@@ -4791,4 +4794,79 @@ fn read_report_markdown(
     text: decode_text_bytes(&bytes),
     relative_path,
   }))
+}
+
+/* ---------------- Live2D 标注工作台 ---------------- */
+
+fn live2d_data_dir(root: &Path, group_id: &str) -> PathBuf {
+  root.join("live2d").join(sanitize_file_name(group_id)).join("data")
+}
+
+/// 列出可作为基准图的候选（基准图.png 优先，其次封面、再其次各图层）
+#[tauri::command]
+fn list_live2d_base_images(resource_root: String, group_id: String) -> Result<Vec<String>, String> {
+  let root = PathBuf::from(&resource_root);
+  let group_dir = root.join("live2d").join(sanitize_file_name(&group_id));
+  let mut out: Vec<String> = Vec::new();
+
+  let mut push = |path: PathBuf, out: &mut Vec<String>| {
+    if path.is_file() && has_extension(&path, IMAGE_EXTENSIONS) {
+      let value = path_to_string(path);
+      if !out.contains(&value) {
+        out.push(value);
+      }
+    }
+  };
+
+  push(group_dir.join("source").join("rig").join("基准图.png"), &mut out);
+  push(group_dir.join("cover").join("cover.png"), &mut out);
+  if let Ok(entries) = fs::read_dir(group_dir.join("source").join("rig").join("art")) {
+    let mut files: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    files.sort();
+    for file in files {
+      push(file, &mut out);
+    }
+  }
+  if let Ok(entries) = fs::read_dir(group_dir.join("source")) {
+    let mut files: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    files.sort();
+    for file in files {
+      push(file, &mut out);
+    }
+  }
+  Ok(out)
+}
+
+/// 读取已有标注（没有就返回 null）
+#[tauri::command]
+fn load_live2d_annotation(
+  resource_root: String,
+  group_id: String,
+) -> Result<Option<serde_json::Value>, String> {
+  let root = PathBuf::from(&resource_root);
+  let file = live2d_data_dir(&root, &group_id).join("annotations.json");
+  if !file.is_file() {
+    return Ok(None);
+  }
+  let bytes = fs::read(&file).map_err(|error| error.to_string())?;
+  let value = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| error.to_string())?;
+  Ok(Some(value))
+}
+
+/// 保存标注到 library/live2d/<id>/data/annotations.json
+#[tauri::command]
+fn save_live2d_annotation(
+  resource_root: String,
+  group_id: String,
+  payload: serde_json::Value,
+) -> Result<(), String> {
+  let root = PathBuf::from(&resource_root);
+  let dir = live2d_data_dir(&root, &group_id);
+  fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+  let content = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+  let target = dir.join("annotations.json");
+  let temp = dir.join("annotations.json.tmp");
+  fs::write(&temp, content).map_err(|error| error.to_string())?;
+  fs::rename(&temp, &target).map_err(|error| error.to_string())?;
+  Ok(())
 }

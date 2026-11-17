@@ -12,6 +12,7 @@ import ImageCoverPicker from "@/components/ImageCoverPicker";
 import Live2DPanel from "@/components/Live2DPanel";
 import NovelReader from "@/components/NovelReader";
 import DanmakuOverlay, { type DanmakuItem } from "@/components/DanmakuOverlay";
+import Live2dAnnotator from "@/components/Live2dAnnotator";
 import OriginalImageViewer from "@/components/OriginalImageViewer";
 
 function pathBaseName(path: string): string {
@@ -106,6 +107,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const [danmakuMenuOpen, setDanmakuMenuOpen] = useState(false);
   const [danmakuBusy, setDanmakuBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [annotatorOpen, setAnnotatorOpen] = useState(false);
   // 播放区自定义全屏：把视频和弹幕层一起放大，原生全屏只会放大 video 导致弹幕消失
   const videoStageRef = useRef<HTMLDivElement | null>(null);
   const [stageFull, setStageFull] = useState(false);
@@ -909,6 +911,17 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                 <ArrowLeft className="h-4 w-4" />
                 返回列表
               </button>
+              {category === "live2d" && currentItem ? (
+                <button
+                  type="button"
+                  onClick={() => setAnnotatorOpen(true)}
+                  title="载入基准图，逐项标注眼睛 / 衣服 / 手脚 / 头发尾巴等节点"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-300/40 bg-fuchsia-300/15 px-4 py-2 text-sm text-fuchsia-50 transition hover:bg-fuchsia-300/25"
+                >
+                  <Tag className="h-4 w-4" />
+                  标注工作台
+                </button>
+              ) : null}
               {isImages ? (
                 <button
                   type="button"
@@ -1783,6 +1796,14 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
         onClose={() => setVideoCoverPickerOpen(false)}
         onPick={(imageUrl) => void handlePickVideoCover(imageUrl)}
       />
+
+      {annotatorOpen && currentItem && category === "live2d" ? (
+        <Live2dAnnotator
+          groupId={currentItem.id}
+          title={currentItem.altName ?? currentItem.title}
+          onClose={() => setAnnotatorOpen(false)}
+        />
+      ) : null}
 
       <OriginalImageViewer
         open={originalOpen}
