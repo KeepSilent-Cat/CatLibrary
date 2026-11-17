@@ -59,4 +59,5 @@
 1. 节点分组导出成绑定器可直接吃的格式（目前是通用 JSON）。
 2. 记录「层关系」：母图 id、图层顺序、画布偏移（对应分层 PNG 素材）。
 3. 标注结果叠到分层预览上做一致性检查。
-4. 与 RigViewer 的 `rigOptions`（headPivot / eyeCenters / mouthPivot 等）互相回填，减少重复输入。
+4. ~~与 RigViewer 的 `rigOptions` 互相回填~~ —— 已实现：工作台顶部「回填到 rig」按钮会把
+   `eyeCenters / gazeCenter / mouthPivot / headPivot / backHairPivot` 写进 manifest。
