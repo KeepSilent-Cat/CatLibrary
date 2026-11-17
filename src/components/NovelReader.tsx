@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronRight, Loader2, Minus, Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppStore } from "@/store/useAppStore";
 
 interface NovelChapter {
@@ -19,6 +19,49 @@ function isEpub(chapter: NovelChapter): boolean {
   return /\.epub$/i.test(chapter.relativePath);
 }
 
+const CHUNK_CHARS = 20000;
+
+type Segment = { title: string; body: string };
+
+/**
+ * 长篇小说常见「一整个 txt」，直接渲染几百万字会卡死。
+ * 这里按「第X章 / 第X回 / 第X节」切成段，读的时候一次只渲染一段。
+ */
+function splitSegments(raw: string): Segment[] {
+  if (raw.length <= CHUNK_CHARS * 2) {
+    return [{ title: "", body: raw }];
+  }
+  const heading = /^[ \t]*(第[0-9零一二三四五六七八九十百千万两]{1,12}[章回节卷][^\n]{0,30})$/gm;
+  const marks: Array<{ index: number; title: string }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = heading.exec(raw)) !== null) {
+    marks.push({ index: match.index, title: match[1].trim() });
+  }
+  if (marks.length < 3) {
+    // 认不出章节就按固定字数切块，至少不会一次渲染整个文件
+    const chunks: Segment[] = [];
+    for (let offset = 0; offset < raw.length; offset += CHUNK_CHARS) {
+      chunks.push({
+        title: `第 ${chunks.length + 1} 段`,
+        body: raw.slice(offset, offset + CHUNK_CHARS),
+      });
+    }
+    return chunks;
+  }
+  const segments: Segment[] = [];
+  if (marks[0].index > 0) {
+    const head = raw.slice(0, marks[0].index).trim();
+    if (head) {
+      segments.push({ title: "开头", body: head });
+    }
+  }
+  marks.forEach((mark, position) => {
+    const end = position + 1 < marks.length ? marks[position + 1].index : raw.length;
+    segments.push({ title: mark.title, body: raw.slice(mark.index, end) });
+  });
+  return segments;
+}
+
 /** 记住每本书读到第几章 */
 function progressKey(itemId: string): string {
   return `catlibrary-novel-progress:${itemId}`;
@@ -33,6 +76,11 @@ export default function NovelReader({ itemId }: { itemId: string }) {
   const [loadingText, setLoadingText] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fontSize, setFontSize] = useState(17);
+  const [segmentIndex, setSegmentIndex] = useState(0);
+  const segments = useMemo(() => splitSegments(text), [text]);
+  useEffect(() => {
+    setSegmentIndex(0);
+  }, [text]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // 加载章节列表
@@ -191,6 +239,23 @@ export default function NovelReader({ itemId }: { itemId: string }) {
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
           <span className="min-w-0 flex-1 truncate text-xs text-white/70">{chapterLabel(chapter)}</span>
+          {segments.length > 1 ? (
+            <select
+              value={segmentIndex}
+              onChange={(event) => {
+                setSegmentIndex(Number(event.target.value));
+                scrollRef.current?.scrollTo({ top: 0 });
+              }}
+              title="这本书太长，已自动按章节分段"
+              className="max-w-[220px] shrink-0 rounded-full border border-white/16 bg-white/8 px-2 py-1 text-[11px] text-white/80 outline-none"
+            >
+              {segments.map((segment, index) => (
+                <option key={`${segment.title}-${index}`} value={index}>
+                  {index + 1}. {segment.title || `第 ${index + 1} 段`}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <button
             type="button"
             onClick={() => setFontSize((size) => Math.max(12, size - 1))}
@@ -219,12 +284,46 @@ export default function NovelReader({ itemId }: { itemId: string }) {
           ) : error ? (
             <p className="text-sm leading-7 text-rose-200">{error}</p>
           ) : (
-            <pre
-              className="whitespace-pre-wrap break-words font-sans leading-[1.9] text-white/86"
-              style={{ fontSize }}
-            >
-              {text}
-            </pre>
+            <>
+              {segments.length > 1 ? (
+                <div className="mb-3 flex items-center justify-between gap-2 text-[11px] text-white/40">
+                  <span>
+                    分段 {segmentIndex + 1} / {segments.length}
+                    {segments[segmentIndex]?.title ? ` · ${segments[segmentIndex].title}` : ""}
+                  </span>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      disabled={segmentIndex <= 0}
+                      onClick={() => {
+                        setSegmentIndex((index) => Math.max(0, index - 1));
+                        scrollRef.current?.scrollTo({ top: 0 });
+                      }}
+                      className="rounded-full border border-white/16 bg-white/8 px-2 py-0.5 text-white/70 transition hover:bg-white/16 disabled:opacity-35"
+                    >
+                      上一段
+                    </button>
+                    <button
+                      type="button"
+                      disabled={segmentIndex >= segments.length - 1}
+                      onClick={() => {
+                        setSegmentIndex((index) => Math.min(segments.length - 1, index + 1));
+                        scrollRef.current?.scrollTo({ top: 0 });
+                      }}
+                      className="rounded-full border border-white/16 bg-white/8 px-2 py-0.5 text-white/70 transition hover:bg-white/16 disabled:opacity-35"
+                    >
+                      下一段
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <pre
+                className="whitespace-pre-wrap break-words font-sans leading-[1.9] text-white/86"
+                style={{ fontSize }}
+              >
+                {segments[segmentIndex]?.body ?? ""}
+              </pre>
+            </>
           )}
         </div>
       </div>

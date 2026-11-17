@@ -1094,7 +1094,7 @@ export default function CategoryPage({
       ) : null}
 
       {(category !== "screenshots" &&
-        (isVideoCategory || category === "comics" || category === "images" || category === "music")) &&
+        (isVideoCategory || category === "comics" || category === "images" || category === "music" || category === "novels")) &&
       !fullscreen ? (
         <div className="mb-3 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border border-white/12 bg-white/6 px-4 py-2">
           <button
@@ -1196,7 +1196,7 @@ export default function CategoryPage({
       ) : null}
 
       {category !== "screenshots" &&
-        (isVideoCategory || category === "comics" || category === "images" || category === "music") && (
+        (isVideoCategory || category === "comics" || category === "images" || category === "music" || category === "novels") && (
         <AddItemsModal
           open={addModalOpen}
           category={category}

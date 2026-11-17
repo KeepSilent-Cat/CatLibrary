@@ -451,7 +451,12 @@ fn add_library_items(
     }
 
     if source.is_dir() {
-      copy_dir_contents(&source, &source_dir).map_err(|error| error.to_string())?;
+      if category == "novels" {
+        // 小说目录里常有 .chapters / .source 这类隐藏缓存，跳过它们只复制正文
+        copy_visible_dir_contents(&source, &source_dir).map_err(|error| error.to_string())?;
+      } else {
+        copy_dir_contents(&source, &source_dir).map_err(|error| error.to_string())?;
+      }
     } else if let Some(file_name) = source.file_name() {
       fs::copy(&source, source_dir.join(file_name)).map_err(|error| error.to_string())?;
     }
@@ -1463,6 +1468,15 @@ fn collect_novel_files(
   entries.sort_by(|left, right| natural_compare_paths(left, right));
 
   for entry in entries {
+    // 跳过 .chapters / .source 这类隐藏的缓存目录，它们不是正文章节
+    let hidden = entry
+      .file_name()
+      .and_then(|name| name.to_str())
+      .map(|name| name.starts_with('.'))
+      .unwrap_or(false);
+    if hidden {
+      continue;
+    }
     if entry.is_dir() {
       collect_novel_files(source_dir, &entry, out)?;
       continue;
@@ -1509,7 +1523,7 @@ fn list_novel_chapters(
 /// 单次上限 8MB，避免误拖入超大文件把界面卡死。
 #[tauri::command]
 fn read_novel_text(path: String) -> Result<String, String> {
-  const MAX_BYTES: u64 = 8 * 1024 * 1024;
+  const MAX_BYTES: u64 = 24 * 1024 * 1024;
 
   let file_path = PathBuf::from(&path);
   if !file_path.is_file() {
@@ -1521,7 +1535,7 @@ fn read_novel_text(path: String) -> Result<String, String> {
 
   let metadata = fs::metadata(&file_path).map_err(|error| error.to_string())?;
   if metadata.len() > MAX_BYTES {
-    return Err("文件超过 8MB，暂不支持在应用内直接阅读".to_string());
+    return Err("文件超过 24MB，暂不支持在应用内直接阅读".to_string());
   }
 
   let bytes = fs::read(&file_path).map_err(|error| error.to_string())?;
@@ -2300,6 +2314,29 @@ fn next_sequential_group_dir(category_dir: &Path, category: &str) -> PathBuf {
     number += 1;
   }
   category_dir.join(format!("{prefix}_{number}"))
+}
+
+/// 复制目录内容，但跳过以 . 开头的隐藏文件/目录
+fn copy_visible_dir_contents(source: &Path, target: &Path) -> std::io::Result<()> {
+  for entry in fs::read_dir(source)? {
+    let entry = entry?;
+    let name = entry.file_name();
+    if name.to_string_lossy().starts_with('.') {
+      continue;
+    }
+    let from = entry.path();
+    let to = target.join(&name);
+    if from.is_dir() {
+      fs::create_dir_all(&to)?;
+      copy_visible_dir_contents(&from, &to)?;
+    } else {
+      if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+      }
+      fs::copy(&from, &to)?;
+    }
+  }
+  Ok(())
 }
 
 fn copy_dir_contents(source: &Path, target: &Path) -> std::io::Result<()> {
