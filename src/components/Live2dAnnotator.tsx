@@ -159,6 +159,7 @@ export default function Live2dAnnotator({ groupId, title, onClose }: { groupId: 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [applyMsg, setApplyMsg] = useState<string | null>(null);
   const [partIndex, setPartIndex] = useState(0);
   const [stepIndex, setStepIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -459,6 +460,7 @@ export default function Live2dAnnotator({ groupId, title, onClose }: { groupId: 
           <p className="text-[11px] text-white/40">
             已标 {progress.done} / {progress.total}
             {saveState === "saving" ? " · 保存中…" : saveState === "saved" ? " · 已自动保存" : ""}
+            {applyMsg ? ` · ${applyMsg}` : ""}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
@@ -476,6 +478,21 @@ export default function Live2dAnnotator({ groupId, title, onClose }: { groupId: 
           </button>
           <button type="button" onClick={resetView} className="rounded-full border border-white/16 bg-white/8 p-1.5 text-white/70 transition hover:bg-white/16" title="恢复视图">
             <RotateCcw className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const message = await invoke<string>("apply_annotation_to_manifest", { resourceRoot, groupId });
+                setApplyMsg(message);
+              } catch (currentError) {
+                setApplyMsg(currentError instanceof Error ? currentError.message : String(currentError));
+              }
+            }}
+            title="把眼睛/嘴/头发/头颈的节点写回 rig manifest 的 rigOptions"
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/40 bg-emerald-300/15 px-3 py-1.5 text-xs text-emerald-50 transition hover:bg-emerald-300/25"
+          >
+            <Save className="h-3.5 w-3.5" /> 回填到 rig
           </button>
           <button type="button" onClick={exportJson} className="inline-flex items-center gap-1.5 rounded-full border border-sky-300/40 bg-sky-300/15 px-3 py-1.5 text-xs text-sky-50 transition hover:bg-sky-300/25">
             <Download className="h-3.5 w-3.5" /> 导出 JSON

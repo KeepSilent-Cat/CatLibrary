@@ -3749,6 +3749,7 @@ pub fn run() {
       list_live2d_base_images,
       load_live2d_annotation,
       save_live2d_annotation,
+      apply_annotation_to_manifest,
       mobile_server::start_mobile_access,
       mobile_server::update_mobile_filter,
       mobile_server::stop_mobile_access,
@@ -4869,4 +4870,82 @@ fn save_live2d_annotation(
   fs::write(&temp, content).map_err(|error| error.to_string())?;
   fs::rename(&temp, &target).map_err(|error| error.to_string())?;
   Ok(())
+}
+
+/// 把标注结果回填到 rig manifest 的 rigOptions（减少重复手填坐标）
+#[tauri::command]
+fn apply_annotation_to_manifest(
+  resource_root: String,
+  group_id: String,
+) -> Result<String, String> {
+  let root = PathBuf::from(&resource_root);
+  let group_dir = root.join("live2d").join(sanitize_file_name(&group_id));
+  let anno_path = group_dir.join("data").join("annotations.json");
+  let manifest_path = group_dir.join("source").join("rig").join("manifest.json");
+
+  let anno_text = fs::read_to_string(&anno_path).map_err(|_| "还没有标注数据".to_string())?;
+  let anno: serde_json::Value =
+    serde_json::from_str(&anno_text).map_err(|error| error.to_string())?;
+  let manifest_text = fs::read_to_string(&manifest_path).map_err(|_| "找不到 rig manifest".to_string())?;
+  let mut manifest: serde_json::Value =
+    serde_json::from_str(&manifest_text).map_err(|error| error.to_string())?;
+
+  let point = |key: &str| -> Option<(i64, i64)> {
+    let value = anno.get("points")?.get(key)?;
+    let x = value.get("x")?.as_f64()?;
+    let y = value.get("y")?.as_f64()?;
+    Some((x.round() as i64, y.round() as i64))
+  };
+
+  let mut applied: Vec<String> = Vec::new();
+  let rig_options = manifest
+    .get_mut("rigOptions")
+    .and_then(|value| value.as_object_mut())
+    .ok_or_else(|| "manifest 缺少 rigOptions".to_string())?;
+
+  fn write_pair(
+    rig: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    pair: (i64, i64),
+  ) {
+    rig.insert(key.to_string(), serde_json::json!([pair.0, pair.1]));
+  }
+
+  if let Some(value) = point("face.neck") {
+    write_pair(rig_options, "headPivot", value);
+    applied.push("headPivot".to_string());
+  }
+  if let Some(value) = point("mouth.center") {
+    write_pair(rig_options, "mouthPivot", value);
+    applied.push("mouthPivot".to_string());
+  }
+  if let Some(value) = point("hair.root") {
+    write_pair(rig_options, "backHairPivot", value);
+    applied.push("backHairPivot".to_string());
+  }
+  if let Some(left) = point("eye.l.pupil") {
+    rig_options.insert(
+      "eyeCenters".to_string(),
+      serde_json::json!({
+        "l": [left.0, left.1],
+        "r": point("eye.r.pupil").map(|value| vec![value.0, value.1]).unwrap_or_else(|| vec![left.0, left.1])
+      }),
+    );
+    applied.push("eyeCenters".to_string());
+  }
+  if let (Some(left), Some(right)) = (point("eye.l.pupil"), point("eye.r.pupil")) {
+    let center = ((left.0 + right.0) / 2, (left.1 + right.1) / 2);
+    write_pair(rig_options, "gazeCenter", center);
+    applied.push("gazeCenter".to_string());
+  }
+
+  let options = serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?;
+  let temp = manifest_path.with_extension("json.tmp");
+  fs::write(&temp, options).map_err(|error| error.to_string())?;
+  fs::rename(&temp, &manifest_path).map_err(|error| error.to_string())?;
+
+  if applied.is_empty() {
+    return Ok("没有可回填的节点（至少标一下眼睛或嘴）".to_string());
+  }
+  Ok(format!("已回填：{}", applied.join("、")))
 }
