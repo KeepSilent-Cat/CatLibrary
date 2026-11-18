@@ -1,7 +1,7 @@
 import {MusicSession} from "@/components/PersistentMusic";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Loader2, Maximize2, MessageCircle, MoreHorizontal, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
+import { ArrowLeft, Camera, FolderOpen, FolderTree, ImagePlus, Layers, Loader2, Maximize2, MessageCircle, MoreHorizontal, PanelRight, Play, Settings2, Subtitles, Tag, Trash2, Wallpaper, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { categoryMeta, RATING_OPTIONS, type CategoryKey, type ContentRating, type LibraryItem } from "@/data/library";
@@ -13,6 +13,7 @@ import Live2DPanel from "@/components/Live2DPanel";
 import NovelReader from "@/components/NovelReader";
 import DanmakuOverlay, { type DanmakuItem } from "@/components/DanmakuOverlay";
 import Live2dAnnotator from "@/components/Live2dAnnotator";
+import Live2dLayerStudio from "@/components/Live2dLayerStudio";
 import OriginalImageViewer from "@/components/OriginalImageViewer";
 
 function pathBaseName(path: string): string {
@@ -108,6 +109,7 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
   const [danmakuBusy, setDanmakuBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [annotatorOpen, setAnnotatorOpen] = useState(false);
+  const [layerStudioOpen, setLayerStudioOpen] = useState(false);
   // 播放区自定义全屏：把视频和弹幕层一起放大，原生全屏只会放大 video 导致弹幕消失
   const videoStageRef = useRef<HTMLDivElement | null>(null);
   const [stageFull, setStageFull] = useState(false);
@@ -912,15 +914,26 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
                 返回列表
               </button>
               {category === "live2d" && currentItem ? (
+                <>
+                <button
+                  type="button"
+                  onClick={() => setLayerStudioOpen(true)}
+                  title="像 PS 一样叠着看分层 PNG，自动标出被上层遮住的区域"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-300/40 bg-fuchsia-300/15 px-4 py-2 text-sm text-fuchsia-50 transition hover:bg-fuchsia-300/25"
+                >
+                  <Layers className="h-4 w-4" />
+                  图层比对
+                </button>
                 <button
                   type="button"
                   onClick={() => setAnnotatorOpen(true)}
-                  title="载入基准图，逐项标注眼睛 / 衣服 / 手脚 / 头发尾巴等节点"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-300/40 bg-fuchsia-300/15 px-4 py-2 text-sm text-fuchsia-50 transition hover:bg-fuchsia-300/25"
+                  title="在基准图上逐项标节点（眼睛/衣服/手脚/头发尾巴）"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm text-white/75 transition hover:bg-white/16"
                 >
                   <Tag className="h-4 w-4" />
-                  标注工作台
+                  节点标注
                 </button>
+                </>
               ) : null}
               {isImages ? (
                 <button
@@ -1796,6 +1809,14 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
         onClose={() => setVideoCoverPickerOpen(false)}
         onPick={(imageUrl) => void handlePickVideoCover(imageUrl)}
       />
+
+      {layerStudioOpen && currentItem && category === "live2d" ? (
+        <Live2dLayerStudio
+          groupId={currentItem.id}
+          title={currentItem.altName ?? currentItem.title}
+          onClose={() => setLayerStudioOpen(false)}
+        />
+      ) : null}
 
       {annotatorOpen && currentItem && category === "live2d" ? (
         <Live2dAnnotator

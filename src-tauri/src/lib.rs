@@ -3746,6 +3746,8 @@ pub fn run() {
       list_video_danmaku,
       load_video_danmaku,
       load_video_subtitle,
+      load_live2d_layers,
+      save_live2d_layers,
       list_live2d_base_images,
       load_live2d_annotation,
       save_live2d_annotation,
@@ -5026,4 +5028,156 @@ mod live2d_annotation_tests {
 
     let _ = fs::remove_dir_all(&root);
   }
+}
+
+/* ---------------- Live2D 图层比对（PS 式） ---------------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LayerEntry {
+  id: String,
+  role: String,
+  group: String,
+  file: String,
+  path: String,
+  offset: [i64; 2],
+  hidden: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LayerManifest {
+  canvas_w: i64,
+  canvas_h: i64,
+  layers: Vec<LayerEntry>,
+}
+
+/// 读取 rig manifest 里的图层，并合并 data/layers.json 里保存的顺序/偏移/隐藏状态
+#[tauri::command]
+fn load_live2d_layers(resource_root: String, group_id: String) -> Result<LayerManifest, String> {
+  let root = PathBuf::from(&resource_root);
+  let group_dir = root.join("live2d").join(sanitize_file_name(&group_id));
+  let rig_dir = group_dir.join("source").join("rig");
+  let manifest_path = rig_dir.join("manifest.json");
+  let text = fs::read_to_string(&manifest_path).map_err(|_| "找不到 rig manifest".to_string())?;
+  let manifest: serde_json::Value =
+    serde_json::from_str(&text).map_err(|error| error.to_string())?;
+
+  let canvas_w = manifest
+    .get("canvas")
+    .and_then(|value| value.get("w"))
+    .and_then(|value| value.as_i64())
+    .unwrap_or(1280);
+  let canvas_h = manifest
+    .get("canvas")
+    .and_then(|value| value.get("h"))
+    .and_then(|value| value.as_i64())
+    .unwrap_or(1280);
+
+  // 已保存的状态：order / offsets / hidden
+  let state_path = group_dir.join("data").join("layers.json");
+  let state: serde_json::Value = fs::read_to_string(&state_path)
+    .ok()
+    .and_then(|raw| serde_json::from_str(&raw).ok())
+    .unwrap_or(serde_json::Value::Null);
+
+  let order: Vec<String> = state
+    .get("order")
+    .and_then(|value| value.as_array())
+    .map(|list| list.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+    .unwrap_or_default();
+  let hidden: Vec<String> = state
+    .get("hidden")
+    .and_then(|value| value.as_array())
+    .map(|list| list.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+    .unwrap_or_default();
+
+  let mut layers: Vec<LayerEntry> = Vec::new();
+  if let Some(list) = manifest.get("layers").and_then(|value| value.as_array()) {
+    for (index, layer) in list.iter().enumerate() {
+      let id = layer
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("layer{index}"));
+      let file = layer
+        .get("file")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+      let path = rig_dir.join(&file);
+      if !path.is_file() {
+        continue;
+      }
+      let offset = state
+        .get("offsets")
+        .and_then(|value| value.get(&id))
+        .and_then(|value| value.as_array())
+        .map(|pair| {
+          [
+            pair.first().and_then(|item| item.as_i64()).unwrap_or(0),
+            pair.get(1).and_then(|item| item.as_i64()).unwrap_or(0),
+          ]
+        })
+        .unwrap_or_else(|| {
+          let from_manifest = layer.get("offset").and_then(|value| value.as_array());
+          match from_manifest {
+            Some(pair) => [
+              pair.first().and_then(|item| item.as_i64()).unwrap_or(0),
+              pair.get(1).and_then(|item| item.as_i64()).unwrap_or(0),
+            ],
+            None => [0, 0],
+          }
+        });
+
+      layers.push(LayerEntry {
+        hidden: hidden.iter().any(|value| value == &id),
+        id,
+        role: layer
+          .get("role")
+          .and_then(|value| value.as_str())
+          .unwrap_or_default()
+          .to_string(),
+        group: layer
+          .get("group")
+          .and_then(|value| value.as_str())
+          .unwrap_or_default()
+          .to_string(),
+        file,
+        path: path_to_string(path),
+        offset,
+      });
+    }
+  }
+
+  // 按保存过的顺序排；没记录的排在后面保持原序
+  layers.sort_by_key(|layer| {
+    order
+      .iter()
+      .position(|id| id == &layer.id)
+      .unwrap_or(usize::MAX)
+  });
+
+  Ok(LayerManifest { canvas_w, canvas_h, layers })
+}
+
+/// 保存图层顺序 / 偏移 / 隐藏状态
+#[tauri::command]
+fn save_live2d_layers(
+  resource_root: String,
+  group_id: String,
+  payload: serde_json::Value,
+) -> Result<(), String> {
+  let root = PathBuf::from(&resource_root);
+  let dir = root
+    .join("live2d")
+    .join(sanitize_file_name(&group_id))
+    .join("data");
+  fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+  let content = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+  let target = dir.join("layers.json");
+  let temp = dir.join("layers.json.tmp");
+  fs::write(&temp, content).map_err(|error| error.to_string())?;
+  fs::rename(&temp, &target).map_err(|error| error.to_string())?;
+  Ok(())
 }
