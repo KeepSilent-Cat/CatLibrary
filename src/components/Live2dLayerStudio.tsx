@@ -50,10 +50,10 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
-  const [occlusion, setOcclusion] = useState<{ width: number; height: number; data: Uint8ClampedArray } | null>(null);
+  const [maskUrl, setMaskUrl] = useState<string>("");
   const [occlusionBusy, setOcclusionBusy] = useState(false);
   const [occludedRatio, setOccludedRatio] = useState(0);
-  const [selfBox, setSelfBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [selfBox, setSelfBox] = useState<[number, number, number, number] | null>(null);
   const [saving, setSaving] = useState(false);
   const historyRef = useRef<LoadedLayer[][]>([]);
   const redoRef = useRef<LoadedLayer[][]>([]);
@@ -61,7 +61,7 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
   const [othersFaded, setOthersFaded] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maskRef = useRef<HTMLCanvasElement | null>(null);
+
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ panning: boolean; startX: number; startY: number; panX: number; panY: number }>({
     panning: false,
@@ -139,124 +139,56 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
     ctx.globalAlpha = 1;
   }, [layers, manifest, selected, othersFaded]);
 
-  // 遮挡检测：选中层的可见像素 ∩ 它上面所有层的不透明像素
+  // 遮挡检测交给后端（Rust 读 PNG 算 alpha 交集），避免 canvas 跨源读像素触发 SecurityError
   useEffect(() => {
-    if (!manifest || !selected || layers.length === 0) {
-      setOcclusion(null);
+    if (!manifest || !selected) {
+      setMaskUrl("");
+      setSelfBox(null);
       setOccludedRatio(0);
       return;
     }
-    const index = layers.findIndex((layer) => layer.id === selected);
-    if (index < 0) {
-      setOcclusion(null);
-      return;
-    }
-    const above = layers.slice(index + 1).filter((layer) => !layer.hidden);
-
+    let cancelled = false;
     setOcclusionBusy(true);
-    const width = manifest.canvasW;
-    const height = manifest.canvasH;
-    // 用离屏画布做像素运算；大画布按比例缩到 900px 内，肉眼判断足够
-    const scale = Math.min(1, 900 / Math.max(width, height));
-    const w = Math.max(1, Math.round(width * scale));
-    const h = Math.max(1, Math.round(height * scale));
-
-    const self = layers[index];
-    const selfCanvas = document.createElement("canvas");
-    selfCanvas.width = w;
-    selfCanvas.height = h;
-    const selfCtx = selfCanvas.getContext("2d");
-    const aboveCanvas = document.createElement("canvas");
-    aboveCanvas.width = w;
-    aboveCanvas.height = h;
-    const aboveCtx = aboveCanvas.getContext("2d");
-    if (!selfCtx || !aboveCtx) {
-      setOcclusionBusy(false);
-      return;
-    }
-    selfCtx.drawImage(self.image, self.offset[0] * scale, self.offset[1] * scale, self.image.width * scale, self.image.height * scale);
-    for (const layer of above) {
-      aboveCtx.drawImage(layer.image, layer.offset[0] * scale, layer.offset[1] * scale, layer.image.width * scale, layer.image.height * scale);
-    }
-    const selfData = selfCtx.getImageData(0, 0, w, h).data;
-    const aboveData = aboveCtx.getImageData(0, 0, w, h).data;
-
-    const mask = new Uint8ClampedArray(w * h * 4);
-    let occluded = 0;
-    let visiblePixels = 0;
-    let minX = w;
-    let minY = h;
-    let maxX = -1;
-    let maxY = -1;
-    for (let index2 = 0; index2 < w * h; index2 += 1) {
-      const alphaSelf = selfData[index2 * 4 + 3];
-      if (alphaSelf <= 8) {
-        continue;
-      }
-      const px = index2 % w;
-      const py = Math.floor(index2 / w);
-      if (px < minX) minX = px;
-      if (px > maxX) maxX = px;
-      if (py < minY) minY = py;
-      if (py > maxY) maxY = py;
-      visiblePixels += 1;
-      if (aboveData[index2 * 4 + 3] > 8) {
-        occluded += 1;
-        mask[index2 * 4] = 255;
-        mask[index2 * 4 + 1] = 64;
-        mask[index2 * 4 + 2] = 90;
-        mask[index2 * 4 + 3] = 200;
-      }
-    }
-    setSelfBox(
-      maxX >= minX
-        ? {
-            x: Math.round(minX / scale),
-            y: Math.round(minY / scale),
-            w: Math.round((maxX - minX + 1) / scale),
-            h: Math.round((maxY - minY + 1) / scale),
+    const timer = window.setTimeout(() => {
+      invoke<{ ratio: number; bbox: [number, number, number, number] | null; maskDataUrl: string }>(
+        "compute_live2d_occlusion",
+        {
+          resourceRoot,
+          groupId,
+          selectedId: selected,
+          layers: layers.map((layer) => ({
+            id: layer.id,
+            file: layer.file,
+            offset: layer.offset,
+            hidden: layer.hidden,
+          })),
+        },
+      )
+        .then((result) => {
+          if (cancelled) {
+            return;
           }
-        : null,
-    );
-    setOcclusion(above.length > 0 && maxX >= minX ? { width: w, height: h, data: mask } : null);
-    setOccludedRatio(visiblePixels > 0 ? occluded / visiblePixels : 0);
-    setOcclusionBusy(false);
-  }, [layers, manifest, selected]);
-
-  // 画遮挡遮罩（呼吸效果）
-  useEffect(() => {
-    const canvas = maskRef.current;
-    if (!canvas || !manifest) {
-      return;
-    }
-    canvas.width = occlusion?.width ?? manifest.canvasW;
-    canvas.height = occlusion?.height ?? manifest.canvasH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      return;
-    }
-    if (!occlusion || !showMask) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
-    const imageData = new ImageData(occlusion.data, occlusion.width, occlusion.height);
-    const buffer = document.createElement("canvas");
-    buffer.width = occlusion.width;
-    buffer.height = occlusion.height;
-    buffer.getContext("2d")?.putImageData(imageData, 0, 0);
-
-    let frame = 0;
-    const step = () => {
-      frame = requestAnimationFrame(step);
-      const pulse = 0.35 + Math.sin(Date.now() / 380) * 0.18;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.globalAlpha = Math.max(0.15, Math.min(0.7, pulse));
-      ctx.drawImage(buffer, 0, 0);
-      ctx.globalAlpha = 1;
+          setMaskUrl(result.maskDataUrl || "");
+          setSelfBox(result.bbox ?? null);
+          setOccludedRatio(result.ratio ?? 0);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setMaskUrl("");
+            setOccludedRatio(0);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setOcclusionBusy(false);
+          }
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
     };
-    step();
-    return () => cancelAnimationFrame(frame);
-  }, [occlusion, showMask, manifest]);
+  }, [layers, manifest, selected, groupId, resourceRoot]);
 
   // 保存图层状态
   const saveState = useCallback(
@@ -576,12 +508,19 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
                 <div className="absolute left-6 top-5 origin-top-left" style={stageStyle}>
                   <div className="relative" style={{ width: manifest?.canvasW, height: manifest?.canvasH }}>
                     <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" style={{ width: manifest?.canvasW, height: manifest?.canvasH }} />
-                    <canvas ref={maskRef} className="pointer-events-none absolute inset-0 h-full w-full" style={{ width: manifest?.canvasW, height: manifest?.canvasH }} />
+                    {maskUrl ? (
+                      <img
+                        src={maskUrl}
+                        alt=""
+                        className="pointer-events-none absolute inset-0 h-full w-full animate-pulse"
+                        style={{ width: manifest?.canvasW, height: manifest?.canvasH, opacity: 0.55 }}
+                      />
+                    ) : null}
                     <div className="pointer-events-none absolute inset-0 border border-white/20" />
                     {selfBox ? (
                       <div
                         className="pointer-events-none absolute border border-dashed border-amber-300/70"
-                        style={{ left: selfBox.x, top: selfBox.y, width: selfBox.w, height: selfBox.h }}
+                        style={{ left: selfBox[0], top: selfBox[1], width: selfBox[2], height: selfBox[3] }}
                       />
                     ) : null}
                   </div>
@@ -597,7 +536,7 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
               ) : null}
               <div className="pointer-events-none absolute bottom-2 left-8 z-20 rounded-full bg-black/60 px-3 py-1 text-[11px] tabular-nums text-white/50">
                 {cursor ? `x ${cursor.x} · y ${cursor.y}` : "拖动平移 · 滚轮缩放（Ctrl）"}
-                {selectedLayer && occlusion ? ` · 遮挡 ${(occludedRatio * 100).toFixed(1)}%` : ""}
+                {selectedLayer && occludedRatio > 0 ? ` · 遮挡 ${(occludedRatio * 100).toFixed(1)}%` : ""}
                 {occlusionBusy ? " · 计算遮挡…" : ""}
               </div>
             </>
@@ -656,7 +595,7 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
 
               <div className="rounded-[14px] border border-white/12 bg-white/5 p-3">
                 <p className="text-[11px] text-white/40">遮挡情况</p>
-                {occlusion ? (
+                {occludedRatio > 0 ? (
                   <>
                     <p className="mt-1 text-sm font-semibold text-rose-200">{(occludedRatio * 100).toFixed(1)}% 被上层盖住</p>
                     <p className="mt-1 text-[10px] leading-4 text-white/35">

@@ -3746,6 +3746,8 @@ pub fn run() {
       list_video_danmaku,
       load_video_danmaku,
       load_video_subtitle,
+      rename_library_item,
+      compute_live2d_occlusion,
       load_live2d_layers,
       save_live2d_layers,
       list_live2d_base_images,
@@ -5180,4 +5182,211 @@ fn save_live2d_layers(
   fs::write(&temp, content).map_err(|error| error.to_string())?;
   fs::rename(&temp, &target).map_err(|error| error.to_string())?;
   Ok(())
+}
+
+/* ---------------- Live2D 遮挡计算（后端做，避免 canvas 跨源读像素） ---------------- */
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LayerState {
+  id: String,
+  file: String,
+  #[serde(default)]
+  offset: [i64; 2],
+  #[serde(default)]
+  hidden: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OcclusionResult {
+  /// 被上层遮住的像素占比
+  ratio: f64,
+  /// 选中层内容的包围盒 [x, y, w, h]（没有内容时为 null）
+  bbox: Option<[i64; 4]>,
+  /// 红色遮罩 PNG 的 data URL（没有遮挡时为空串）
+  mask_data_url: String,
+}
+
+/// 计算某一层被它上面各层遮住的范围
+#[tauri::command]
+fn compute_live2d_occlusion(
+  resource_root: String,
+  group_id: String,
+  selected_id: String,
+  layers: Vec<LayerState>,
+) -> Result<OcclusionResult, String> {
+  let root = PathBuf::from(&resource_root);
+  let rig_dir = root
+    .join("live2d")
+    .join(sanitize_file_name(&group_id))
+    .join("source")
+    .join("rig");
+
+  let manifest_path = rig_dir.join("manifest.json");
+  let manifest_text = fs::read_to_string(&manifest_path).map_err(|_| "找不到 rig manifest".to_string())?;
+  let manifest: serde_json::Value =
+    serde_json::from_str(&manifest_text).map_err(|error| error.to_string())?;
+  let width = manifest
+    .get("canvas")
+    .and_then(|value| value.get("w"))
+    .and_then(|value| value.as_i64())
+    .unwrap_or(1280)
+    .max(1) as u32;
+  let height = manifest
+    .get("canvas")
+    .and_then(|value| value.get("h"))
+    .and_then(|value| value.as_i64())
+    .unwrap_or(1280)
+    .max(1) as u32;
+
+  // 计算用缩小副本，长边不超过 900，速度更快且肉眼判断足够
+  let scale = (900.0 / width.max(height) as f64).min(1.0);
+  let w = ((width as f64 * scale).round() as u32).max(1);
+  let h = ((height as f64 * scale).round() as u32).max(1);
+  let cell_count = (w as usize) * (h as usize);
+
+  let mut selected_mask = vec![false; cell_count];
+  let mut above_mask = vec![false; cell_count];
+  let mut has_selected = false;
+  let mut found = false;
+
+  for (index, layer) in layers.iter().enumerate() {
+    let is_selected = layer.id == selected_id;
+    let is_above = !is_selected && index > layers.iter().position(|item| item.id == selected_id).unwrap_or(usize::MAX);
+    if !is_selected && !is_above {
+      continue;
+    }
+    if layer.hidden {
+      continue;
+    }
+    let path = rig_dir.join(&layer.file);
+    let Ok(image) = image::open(&path) else { continue };
+    let rgba = image.to_rgba8();
+    let (iw, ih) = rgba.dimensions();
+    let ox = (layer.offset[0] as f64 * scale).round() as i64;
+    let oy = (layer.offset[1] as f64 * scale).round() as i64;
+
+    for y in 0..ih {
+      let target_y = y as i64 + oy;
+      if target_y < 0 || target_y >= h as i64 {
+        continue;
+      }
+      for x in 0..iw {
+        let target_x = x as i64 + ox;
+        if target_x < 0 || target_x >= w as i64 {
+          continue;
+        }
+        let alpha = rgba.get_pixel(x, y)[3];
+        if alpha <= 8 {
+          continue;
+        }
+        let cell = (target_y as usize) * (w as usize) + (target_x as usize);
+        if is_selected {
+          selected_mask[cell] = true;
+          has_selected = true;
+        } else {
+          above_mask[cell] = true;
+        }
+      }
+    }
+    if is_selected {
+      found = true;
+    }
+  }
+
+  if !found || !has_selected {
+    return Ok(OcclusionResult { ratio: 0.0, bbox: None, mask_data_url: String::new() });
+  }
+
+  let mut visible = 0usize;
+  let mut occluded = 0usize;
+  let mut min_x = w as i64;
+  let mut min_y = h as i64;
+  let mut max_x = -1i64;
+  let mut max_y = -1i64;
+  let mut mask_pixels: Vec<u8> = vec![0; cell_count * 4];
+
+  for y in 0..h as usize {
+    for x in 0..w as usize {
+      let cell = y * (w as usize) + x;
+      if !selected_mask[cell] {
+        continue;
+      }
+      visible += 1;
+      if x < min_x as usize {
+        min_x = x as i64;
+      }
+      if (x as i64) > max_x {
+        max_x = x as i64;
+      }
+      if y < min_y as usize {
+        min_y = y as i64;
+      }
+      if (y as i64) > max_y {
+        max_y = y as i64;
+      }
+      if above_mask[cell] {
+        occluded += 1;
+        let index = cell * 4;
+        mask_pixels[index] = 255;
+        mask_pixels[index + 1] = 64;
+        mask_pixels[index + 2] = 90;
+        mask_pixels[index + 3] = 200;
+      }
+    }
+  }
+
+  let bbox = if max_x >= min_x {
+    let invert = 1.0 / scale;
+    Some([
+      (min_x as f64 * invert).round() as i64,
+      (min_y as f64 * invert).round() as i64,
+      ((max_x - min_x + 1) as f64 * invert).round() as i64,
+      ((max_y - min_y + 1) as f64 * invert).round() as i64,
+    ])
+  } else {
+    None
+  };
+
+  let ratio = if visible > 0 { occluded as f64 / visible as f64 } else { 0.0 };
+  if occluded == 0 {
+    return Ok(OcclusionResult { ratio, bbox, mask_data_url: String::new() });
+  }
+
+  // 把遮罩编码成 PNG，直接给前端当图片叠上去（不需要读像素）
+  let buffer = image::RgbaImage::from_raw(w, h, mask_pixels).ok_or("遮罩生成失败".to_string())?;
+  let mut cursor = std::io::Cursor::new(Vec::new());
+  image::DynamicImage::ImageRgba8(buffer)
+    .write_to(&mut cursor, image::ImageFormat::Png)
+    .map_err(|error| error.to_string())?;
+  let encoded = cursor.into_inner();
+  Ok(OcclusionResult {
+    ratio,
+    bbox,
+    mask_data_url: format!("data:image/png;base64,{}", encode_base64(&encoded)),
+  })
+}
+
+/// 重命名单个条目（只改 metadata 里的标题，不动文件夹名）
+#[tauri::command]
+fn rename_library_item(
+  app: AppHandle,
+  resource_root: String,
+  category: String,
+  item_id: String,
+  title: String,
+) -> Result<(), String> {
+  let root = PathBuf::from(&resource_root);
+  let mut metadata = load_library_metadata(&app, &root)?;
+  let entry = metadata
+    .entry(format!("{category}/{item_id}"))
+    .or_default();
+  let trimmed = title.trim();
+  entry.title = if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  };
+  write_library_metadata(&app, &root, &metadata)
 }

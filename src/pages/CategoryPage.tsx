@@ -534,6 +534,12 @@ export default function CategoryPage({
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchTagInput, setBatchTagInput] = useState("");
   const [batchConfirmDelete, setBatchConfirmDelete] = useState(false);
+  // 卡片右键菜单
+  const [cardMenu, setCardMenu] = useState<{ x: number; y: number; item: LibraryItem } | null>(null);
+  const [menuConfirmDelete, setMenuConfirmDelete] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<LibraryItem | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [menuBusy, setMenuBusy] = useState(false);
   const [batchCoverOpen, setBatchCoverOpen] = useState(false);
   const [batchCoverLoading, setBatchCoverLoading] = useState(false);
   const [batchCoverItems, setBatchCoverItems] = useState<LibraryItem[]>([]);
@@ -590,6 +596,86 @@ export default function CategoryPage({
   const refreshAfterBatch = () => {
     clearLibraryIndexCache(resourceRoot);
     setRefreshKey((key) => key + 1);
+  };
+
+  /* ---------- 卡片右键操作 ---------- */
+  const openCardMenu = (event: React.MouseEvent, item: LibraryItem) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuConfirmDelete(false);
+    setCardMenu({ x: event.clientX, y: event.clientY, item });
+  };
+
+  const closeCardMenu = () => {
+    setCardMenu(null);
+    setMenuConfirmDelete(false);
+  };
+
+  const quickSetRating = async (item: LibraryItem, rating: number) => {
+    if (menuBusy) {
+      return;
+    }
+    setMenuBusy(true);
+    try {
+      await invoke("bulk_update_metadata", {
+        resourceRoot,
+        patches: [{ category, itemId: item.id, rating, addTags: [] }],
+      });
+      clearLibraryIndexCache(resourceRoot);
+      setRefreshKey((key) => key + 1);
+      setSavedToast(`已设为${rating === 0 ? "全年龄" : rating === 1 ? "R15" : "18+"}`);
+      closeCardMenu();
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "修改分级失败");
+    } finally {
+      setMenuBusy(false);
+    }
+  };
+
+  const quickDelete = async (item: LibraryItem) => {
+    if (!menuConfirmDelete) {
+      setMenuConfirmDelete(true);
+      window.setTimeout(() => setMenuConfirmDelete(false), 4000);
+      return;
+    }
+    if (menuBusy) {
+      return;
+    }
+    setMenuBusy(true);
+    try {
+      await invoke("delete_library_item", { resourceRoot, category, itemId: item.id });
+      clearLibraryIndexCache(resourceRoot);
+      setRefreshKey((key) => key + 1);
+      setSavedToast("已删除");
+      closeCardMenu();
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "删除失败");
+    } finally {
+      setMenuBusy(false);
+    }
+  };
+
+  const submitRename = async () => {
+    if (!renameTarget || menuBusy) {
+      return;
+    }
+    setMenuBusy(true);
+    try {
+      await invoke("rename_library_item", {
+        resourceRoot,
+        category,
+        itemId: renameTarget.id,
+        title: renameValue,
+      });
+      clearLibraryIndexCache(resourceRoot);
+      setRefreshKey((key) => key + 1);
+      setSavedToast("已重命名");
+      setRenameTarget(null);
+    } catch (currentError) {
+      setSavedToast(currentError instanceof Error ? currentError.message : "重命名失败");
+    } finally {
+      setMenuBusy(false);
+    }
   };
 
   const applyBatchRating = async (rating: number) => {
@@ -1214,6 +1300,128 @@ export default function CategoryPage({
         />
       )}
 
+      {cardMenu ? (
+        <>
+          <div className="fixed inset-0 z-[70]" onClick={closeCardMenu} onContextMenu={(event) => { event.preventDefault(); closeCardMenu(); }} />
+          <div
+            className="fixed z-[71] w-52 overflow-hidden rounded-[14px] border border-white/12 bg-[#12101a]/96 p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.5)] backdrop-blur-md"
+            style={{
+              left: Math.min(cardMenu.x, window.innerWidth - 220),
+              top: Math.min(cardMenu.y, window.innerHeight - 320),
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="truncate px-2.5 py-1 text-[10px] text-white/35">{cardMenu.item.altName ?? cardMenu.item.title}</p>
+            <div className="my-1 h-px bg-white/10" />
+            <p className="px-2.5 pb-1 pt-1 text-[10px] text-white/30">切换分级</p>
+            <div className="flex gap-1 px-1.5 pb-1">
+              {(
+                [
+                  [0, "全年龄"],
+                  [1, "R15"],
+                  [2, "18+"],
+                ] as Array<[number, string]>
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={menuBusy}
+                  onClick={() => void quickSetRating(cardMenu.item, value)}
+                  className={`flex-1 rounded-[8px] border px-1 py-1 text-[11px] transition disabled:opacity-40 ${
+                    cardMenu.item.rating === value
+                      ? "border-sky-300/50 bg-sky-300/20 text-sky-50"
+                      : "border-white/14 bg-white/6 text-white/70 hover:bg-white/14"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="my-1 h-px bg-white/10" />
+            <button
+              type="button"
+              onClick={() => {
+                setRenameTarget(cardMenu.item);
+                setRenameValue(cardMenu.item.altName ?? cardMenu.item.title);
+                closeCardMenu();
+              }}
+              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-white/80 transition hover:bg-white/10"
+            >
+              重命名
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                toggleFavorite(category, cardMenu.item.id);
+                closeCardMenu();
+              }}
+              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-white/80 transition hover:bg-white/10"
+            >
+              {favoriteIds.includes(`${category}/${cardMenu.item.id}`) ? "取消收藏" : "加入收藏"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                closeCardMenu();
+                navigate(`/${category}/${cardMenu.item.id}`);
+              }}
+              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-white/80 transition hover:bg-white/10"
+            >
+              打开详情
+            </button>
+            <div className="my-1 h-px bg-white/10" />
+            <button
+              type="button"
+              disabled={menuBusy}
+              onClick={() => void quickDelete(cardMenu.item)}
+              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-xs text-rose-200 transition hover:bg-rose-300/15 disabled:opacity-40"
+            >
+              {menuConfirmDelete ? "再点一次确认删除" : "删除"}
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {renameTarget ? (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="glass-panel w-[420px] max-w-full rounded-[22px] p-5">
+            <p className="text-sm font-semibold text-white">重命名</p>
+            <p className="mt-1 text-[11px] text-white/40">只改显示名，不动文件夹名。</p>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void submitRename();
+                }
+                if (event.key === "Escape") {
+                  setRenameTarget(null);
+                }
+              }}
+              className="mt-3 w-full rounded-[12px] border border-white/16 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-sky-300/50"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRenameTarget(null)}
+                className="rounded-full border border-white/16 bg-white/8 px-4 py-1.5 text-xs text-white/70 transition hover:bg-white/16"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={menuBusy}
+                onClick={() => void submitRename()}
+                className="rounded-full border border-sky-300/45 bg-sky-300/20 px-4 py-1.5 text-xs text-sky-50 transition hover:bg-sky-300/30 disabled:opacity-40"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <ImageCoverPicker
         open={batchCoverOpen}
         loading={batchCoverLoading}
@@ -1262,6 +1470,7 @@ export default function CategoryPage({
                 batchSelected={batchMode && batchSelection.includes(item.id)}
                 onToggleBatch={batchMode ? () => toggleBatchItem(item.id) : undefined}
                 onToggleFavorite={() => toggleFavorite(category, item.id)}
+                onContextMenu={(event) => openCardMenu(event, item)}
                 onSelect={
                   selectedModeActive
                     ? (current) => {

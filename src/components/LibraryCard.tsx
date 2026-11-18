@@ -27,6 +27,7 @@ export default function LibraryCard({
   batchSelected = false,
   onToggleBatch,
   onToggleFavorite,
+  onContextMenu,
   onSelect,
   onClick,
 }: {
@@ -46,6 +47,7 @@ export default function LibraryCard({
   batchSelected?: boolean;
   onToggleBatch?: () => void;
   onToggleFavorite?: () => void;
+  onContextMenu?: (event: React.MouseEvent) => void;
   onSelect?: (item: LibraryItem) => void;
   onClick: (item: LibraryItem) => void;
 }) {
@@ -244,6 +246,7 @@ export default function LibraryCard({
           }
         }
       }}
+      onContextMenu={onContextMenu}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
       className={cn(

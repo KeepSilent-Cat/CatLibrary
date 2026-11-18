@@ -14,6 +14,7 @@ import NovelReader from "@/components/NovelReader";
 import DanmakuOverlay, { type DanmakuItem } from "@/components/DanmakuOverlay";
 import Live2dAnnotator from "@/components/Live2dAnnotator";
 import Live2dLayerStudio from "@/components/Live2dLayerStudio";
+import StudioErrorBoundary from "@/components/StudioErrorBoundary";
 import OriginalImageViewer from "@/components/OriginalImageViewer";
 
 function pathBaseName(path: string): string {
@@ -1811,19 +1812,23 @@ export default function LibraryDetailPage({ category }: { category: CategoryKey 
       />
 
       {layerStudioOpen && currentItem && category === "live2d" ? (
-        <Live2dLayerStudio
-          groupId={currentItem.id}
-          title={currentItem.altName ?? currentItem.title}
-          onClose={() => setLayerStudioOpen(false)}
-        />
+        <StudioErrorBoundary title="图层比对出错了" onClose={() => setLayerStudioOpen(false)}>
+          <Live2dLayerStudio
+            groupId={currentItem.id}
+            title={currentItem.altName ?? currentItem.title}
+            onClose={() => setLayerStudioOpen(false)}
+          />
+        </StudioErrorBoundary>
       ) : null}
 
       {annotatorOpen && currentItem && category === "live2d" ? (
-        <Live2dAnnotator
-          groupId={currentItem.id}
-          title={currentItem.altName ?? currentItem.title}
-          onClose={() => setAnnotatorOpen(false)}
-        />
+        <StudioErrorBoundary title="节点标注出错了" onClose={() => setAnnotatorOpen(false)}>
+          <Live2dAnnotator
+            groupId={currentItem.id}
+            title={currentItem.altName ?? currentItem.title}
+            onClose={() => setAnnotatorOpen(false)}
+          />
+        </StudioErrorBoundary>
       ) : null}
 
       <OriginalImageViewer
