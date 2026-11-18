@@ -4949,3 +4949,81 @@ fn apply_annotation_to_manifest(
   }
   Ok(format!("已回填：{}", applied.join("、")))
 }
+
+#[cfg(test)]
+mod live2d_annotation_tests {
+  use super::*;
+
+  fn write_fixture() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("catlib-anno-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let rig = root.join("live2d").join("live2d_x").join("source").join("rig");
+    fs::create_dir_all(&rig).expect("rig dir");
+    fs::write(
+      rig.join("manifest.json"),
+      r#"{"schema":2,"rigOptions":{"headPivot":[1,1],"eyeCenters":{"l":[1,1],"r":[1,1]}}}"#,
+    )
+    .expect("manifest");
+    let data = root.join("live2d").join("live2d_x").join("data");
+    fs::create_dir_all(&data).expect("data dir");
+    fs::write(
+      data.join("annotations.json"),
+      r#"{"version":1,"image":"x","canvas":{"w":100,"h":100},
+          "points":{"face.neck":{"x":50,"y":40},"mouth.center":{"x":50,"y":60},
+                    "hair.root":{"x":50,"y":20},"eye.l.pupil":{"x":60,"y":45},
+                    "eye.r.pupil":{"x":40,"y":45}},
+          "polygons":{},"invisible":{},"updatedAt":1}"#,
+    )
+    .expect("annotations");
+    root
+  }
+
+  #[test]
+  fn backfills_rig_options_from_annotation() {
+    let root = write_fixture();
+    let message = apply_annotation_to_manifest(
+      root.to_string_lossy().to_string(),
+      "live2d_x".to_string(),
+    )
+    .expect("apply");
+    assert!(message.contains("headPivot"));
+
+    let manifest_path = root
+      .join("live2d")
+      .join("live2d_x")
+      .join("source")
+      .join("rig")
+      .join("manifest.json");
+    let text = fs::read_to_string(&manifest_path).expect("read manifest");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    let options = value.get("rigOptions").expect("rigOptions");
+    assert_eq!(options["headPivot"], serde_json::json!([50, 40]));
+    assert_eq!(options["mouthPivot"], serde_json::json!([50, 60]));
+    assert_eq!(options["eyeCenters"]["l"], serde_json::json!([60, 45]));
+    assert_eq!(options["eyeCenters"]["r"], serde_json::json!([40, 45]));
+    // gazeCenter 取双眼中点
+    assert_eq!(options["gazeCenter"], serde_json::json!([50, 45]));
+
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn reports_missing_annotation_without_touching_manifest() {
+    let root = std::env::temp_dir().join(format!("catlib-anno-miss-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let rig = root.join("live2d").join("live2d_y").join("source").join("rig");
+    fs::create_dir_all(&rig).expect("rig");
+    fs::write(rig.join("manifest.json"), r#"{"rigOptions":{}}"#).expect("manifest");
+
+    let error = apply_annotation_to_manifest(
+      root.to_string_lossy().to_string(),
+      "live2d_y".to_string(),
+    )
+    .expect_err("should fail");
+    assert!(error.contains("还没有标注数据"));
+    let text = fs::read_to_string(rig.join("manifest.json")).expect("read");
+    assert_eq!(text, r#"{"rigOptions":{}}"#);
+
+    let _ = fs::remove_dir_all(&root);
+  }
+}
