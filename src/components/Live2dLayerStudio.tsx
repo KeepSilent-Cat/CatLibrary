@@ -10,8 +10,10 @@ import {
   Layers,
   Loader2,
   Move,
+  Redo2,
   RotateCcw,
   Save,
+  Undo2,
   X,
   ZoomIn,
   ZoomOut,
@@ -53,6 +55,8 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
   const [occludedRatio, setOccludedRatio] = useState(0);
   const [selfBox, setSelfBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [saving, setSaving] = useState(false);
+  const historyRef = useRef<LoadedLayer[][]>([]);
+  const redoRef = useRef<LoadedLayer[][]>([]);
   const [showMask, setShowMask] = useState(true);
   const [othersFaded, setOthersFaded] = useState(true);
 
@@ -277,6 +281,29 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
   );
 
   const updateLayers = (next: LoadedLayer[]) => {
+    historyRef.current.push(layers);
+    if (historyRef.current.length > 80) {
+      historyRef.current.shift();
+    }
+    redoRef.current = [];
+    setLayers(next);
+  };
+
+  const undo = () => {
+    const previous = historyRef.current.pop();
+    if (!previous) {
+      return;
+    }
+    redoRef.current.push(layers);
+    setLayers(previous);
+  };
+
+  const redo = () => {
+    const next = redoRef.current.pop();
+    if (!next) {
+      return;
+    }
+    historyRef.current.push(layers);
     setLayers(next);
   };
 
@@ -343,6 +370,15 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+        return;
+      }
       const map: Record<string, [number, number]> = {
         ArrowLeft: [-1, 0],
         ArrowRight: [1, 0],
@@ -401,6 +437,12 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
+          <button type="button" onClick={undo} disabled={historyRef.current.length === 0} className="rounded-full border border-white/16 bg-white/8 p-1.5 text-white/70 transition hover:bg-white/16 disabled:opacity-30" title="撤销（Ctrl+Z）">
+            <Undo2 className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={redo} disabled={redoRef.current.length === 0} className="rounded-full border border-white/16 bg-white/8 p-1.5 text-white/70 transition hover:bg-white/16 disabled:opacity-30" title="重做（Ctrl+Shift+Z）">
+            <Redo2 className="h-4 w-4" />
+          </button>
           <button type="button" onClick={() => setZoom((value) => ZOOM_STEPS[Math.max(0, ZOOM_STEPS.indexOf(value) - 1)] ?? value / 1.2)} className="rounded-full border border-white/16 bg-white/8 p-1.5 text-white/70 transition hover:bg-white/16" title="缩小">
             <ZoomOut className="h-4 w-4" />
           </button>
@@ -639,7 +681,7 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
       </div>
 
       <footer className="shrink-0 border-t border-white/10 px-4 py-1.5 text-[10px] text-white/30">
-        方向键微调选中层偏移（Shift 一次 10px）· 拖动空白处平移 · Ctrl+滚轮缩放 · 黄色虚线框 = 选中层的实际内容范围
+        方向键微调偏移（Shift×10）· Ctrl+Z 撤销 / Ctrl+Shift+Z 重做 · 拖空白平移 · Ctrl+滚轮缩放 · 黄虚线 = 选中层内容范围
       </footer>
     </div>
   );
