@@ -51,6 +51,7 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
   const [occlusion, setOcclusion] = useState<{ width: number; height: number; data: Uint8ClampedArray } | null>(null);
   const [occlusionBusy, setOcclusionBusy] = useState(false);
   const [occludedRatio, setOccludedRatio] = useState(0);
+  const [selfBox, setSelfBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [showMask, setShowMask] = useState(true);
   const [othersFaded, setOthersFaded] = useState(true);
@@ -147,11 +148,6 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
       return;
     }
     const above = layers.slice(index + 1).filter((layer) => !layer.hidden);
-    if (above.length === 0) {
-      setOcclusion(null);
-      setOccludedRatio(0);
-      return;
-    }
 
     setOcclusionBusy(true);
     const width = manifest.canvasW;
@@ -184,11 +180,21 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
     const mask = new Uint8ClampedArray(w * h * 4);
     let occluded = 0;
     let visiblePixels = 0;
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
     for (let index2 = 0; index2 < w * h; index2 += 1) {
       const alphaSelf = selfData[index2 * 4 + 3];
       if (alphaSelf <= 8) {
         continue;
       }
+      const px = index2 % w;
+      const py = Math.floor(index2 / w);
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
       visiblePixels += 1;
       if (aboveData[index2 * 4 + 3] > 8) {
         occluded += 1;
@@ -198,7 +204,17 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
         mask[index2 * 4 + 3] = 200;
       }
     }
-    setOcclusion({ width: w, height: h, data: mask });
+    setSelfBox(
+      maxX >= minX
+        ? {
+            x: Math.round(minX / scale),
+            y: Math.round(minY / scale),
+            w: Math.round((maxX - minX + 1) / scale),
+            h: Math.round((maxY - minY + 1) / scale),
+          }
+        : null,
+    );
+    setOcclusion(above.length > 0 && maxX >= minX ? { width: w, height: h, data: mask } : null);
     setOccludedRatio(visiblePixels > 0 ? occluded / visiblePixels : 0);
     setOcclusionBusy(false);
   }, [layers, manifest, selected]);
@@ -262,8 +278,23 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
 
   const updateLayers = (next: LoadedLayer[]) => {
     setLayers(next);
-    void saveState(next);
   };
+
+  // 图层变化后统一防抖保存（拖偏移/键盘微调也会走到这里）
+  const loadedRef = useRef(false);
+  useEffect(() => {
+    if (layers.length === 0) {
+      return;
+    }
+    if (!loadedRef.current) {
+      loadedRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void saveState(layers);
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [layers, saveState]);
 
   const toggleHidden = (id: string) => {
     updateLayers(layers.map((layer) => (layer.id === id ? { ...layer, hidden: !layer.hidden } : layer)));
@@ -301,6 +332,40 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
       }),
     );
   };
+
+  // 方向键微调偏移（Shift 一次 10px），文档里承诺过的快捷键
+  useEffect(() => {
+    if (!selected) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      const map: Record<string, [number, number]> = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      };
+      const delta = map[event.key];
+      if (!delta) {
+        return;
+      }
+      event.preventDefault();
+      const step = event.shiftKey ? 10 : 1;
+      setLayers((current) =>
+        current.map((layer) =>
+          layer.id === selected
+            ? { ...layer, offset: [layer.offset[0] + delta[0] * step, layer.offset[1] + delta[1] * step] }
+            : layer,
+        ),
+      );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected]);
 
   const selectedLayer = layers.find((layer) => layer.id === selected) ?? null;
   const stageStyle = useMemo(
@@ -471,6 +536,12 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
                     <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" style={{ width: manifest?.canvasW, height: manifest?.canvasH }} />
                     <canvas ref={maskRef} className="pointer-events-none absolute inset-0 h-full w-full" style={{ width: manifest?.canvasW, height: manifest?.canvasH }} />
                     <div className="pointer-events-none absolute inset-0 border border-white/20" />
+                    {selfBox ? (
+                      <div
+                        className="pointer-events-none absolute border border-dashed border-amber-300/70"
+                        style={{ left: selfBox.x, top: selfBox.y, width: selfBox.w, height: selfBox.h }}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -568,7 +639,7 @@ export default function Live2dLayerStudio({ groupId, title, onClose }: { groupId
       </div>
 
       <footer className="shrink-0 border-t border-white/10 px-4 py-1.5 text-[10px] text-white/30">
-        快捷键：↑↓ 切换图层 · Ctrl+Z 撤销偏移（暂只支持手动改回） · 拖动空白处平移 · Ctrl+滚轮缩放
+        方向键微调选中层偏移（Shift 一次 10px）· 拖动空白处平移 · Ctrl+滚轮缩放 · 黄色虚线框 = 选中层的实际内容范围
       </footer>
     </div>
   );
