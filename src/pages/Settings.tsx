@@ -13,6 +13,7 @@ import type {
 } from "@/data/library";
 import { formatShortcut } from "@/components/AppShell";
 import { useAppStore } from "@/store/useAppStore";
+import { isUnlocked, markUnlocked } from "@/lib/content-unlock";
 import { mobileAccessStatus, startMobileAccess, stopMobileAccess, updateMobileFilter, type MobileAccessInfo } from "@/lib/mobile-access";
 import { loadLibraryIndex } from "@/lib/library-source";
 
@@ -191,7 +192,14 @@ export default function Settings() {
 
   return (
     <div className="h-full min-h-0 overflow-y-auto p-5">
-      <ContentUnlockDialog target={unlockTarget} onClose={()=>setUnlockTarget(null)} onUnlock={setRatingFilter}/>
+      <ContentUnlockDialog
+        target={unlockTarget}
+        onClose={() => setUnlockTarget(null)}
+        onUnlock={(level) => {
+          markUnlocked(level);
+          setRatingFilter(level);
+        }}
+      />
       <div className="grid items-start gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="glass-panel rounded-[32px] p-6">
           <h2 className="text-xl font-semibold text-white">基础设置</h2>
@@ -241,7 +249,12 @@ export default function Settings() {
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => {if(option.value===0)setRatingFilter(0);else setUnlockTarget(option.value);}}
+                    onClick={() => {
+                if (option.value === 0) { setRatingFilter(0); return; }
+                // 本次会话已解锁到这一档（或更高）就不再重复要密码
+                if (isUnlocked(option.value)) { setRatingFilter(option.value); return; }
+                setUnlockTarget(option.value);
+              }}
                     className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition ${
                       ratingFilter === option.value
                         ? "border-rose-300/35 bg-rose-300/12 text-rose-100"

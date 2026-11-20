@@ -62,7 +62,11 @@ export default function LibraryCard({
             ? "截图"
             : item.category === "music"
               ? "音乐集"
-              : "游戏组";
+              : item.category === "novels"
+                ? "小说"
+                : item.category === "live2d"
+                  ? "角色"
+                  : "游戏组";
   const [isHovering, setIsHovering] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [inView, setInView] = useState(false);
@@ -329,7 +333,9 @@ export default function LibraryCard({
             ) : null}
             <div className="mt-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-white/42">
               <span className="truncate">
-                {fallbackLabel} · {item.sourceCount}
+                {fallbackLabel}
+                {/* 小说一本书就是一个 txt 文件，数字没有意义；漫画/图片等仍显示数量 */}
+                {item.category === "novels" ? "" : ` · ${item.sourceCount}`}
               </span>
               {item.rating > 0 ? (
                 <span

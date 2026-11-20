@@ -462,24 +462,33 @@ fn add_library_items(
     }
   }
 
+  // 小说有约定的素材格式：封面.jpg + 简介.json，导入时自动归位并写进 metadata
+  let (novel_title, novel_summary, novel_tags) = if category == "novels" {
+    ingest_novel_extras(&group_dir, &source_dir)?
+  } else {
+    (None, None, None)
+  };
+
   let group_id = group_dir
     .file_name()
     .and_then(|value| value.to_str())
     .unwrap_or_default()
     .to_string();
 
+  let final_title = display_name.or(novel_title);
+
   // 展示名与默认分级写入 metadata，与文件夹名解耦。
   // 分级由前端按「当前显示范围」传入：全年龄模式→0，R15 模式→1，18+ 模式→2。
-  if display_name.is_some() || rating.is_some() {
+  if final_title.is_some() || rating.is_some() || novel_summary.is_some() {
     let mut metadata = load_library_metadata(&app, &root)?;
     metadata.insert(
       format!("{category}/{group_id}"),
       LibraryMetadataEntry {
-        title: display_name,
-        summary: None,
+        title: final_title,
+        summary: novel_summary,
         adult: rating.map(|value| value >= 2),
         rating,
-        tags: None,
+        tags: novel_tags,
         alt_name: None,
         launch_path: None,
       },
@@ -488,6 +497,116 @@ fn add_library_items(
   }
 
   Ok(vec![group_id])
+}
+
+/// 处理小说素材：把 封面.jpg 移到 cover/，解析 简介.json 得到标题/简介/标签。
+/// 返回 (title, summary, tags)；素材不存在时全为 None。
+fn ingest_novel_extras(
+  group_dir: &Path,
+  source_dir: &Path,
+) -> Result<(Option<String>, Option<String>, Option<Vec<String>>), String> {
+  // 封面：封面.jpg / 封面.png → cover/cover.<ext>
+  let cover_dir = group_dir.join("cover");
+  let mut cover_found = false;
+  if let Ok(entries) = fs::read_dir(source_dir) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if !path.is_file() || !has_extension(&path, IMAGE_EXTENSIONS) {
+        continue;
+      }
+      let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+      if !matches!(stem, "封面" | "cover" | "Cover") {
+        continue;
+      }
+      let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("jpg");
+      fs::create_dir_all(&cover_dir).map_err(|error| error.to_string())?;
+      let target = cover_dir.join(format!("cover.{extension}"));
+      fs::rename(&path, &target).or_else(|_| fs::copy(&path, &target).map(|_| ()))
+        .map_err(|error| error.to_string())?;
+      if path.exists() && path != target {
+        let _ = fs::remove_file(&path);
+      }
+      cover_found = true;
+      break;
+    }
+  }
+  let _ = cover_found;
+
+  // 简介：简介.json / intro.json
+  let mut info_path: Option<PathBuf> = None;
+  if let Ok(entries) = fs::read_dir(source_dir) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if !path.is_file() || !has_extension(&path, &["json"]) {
+        continue;
+      }
+      let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+      if matches!(stem, "简介" | "intro" | "info") {
+        info_path = Some(path);
+        break;
+      }
+    }
+  }
+
+  let Some(info_path) = info_path else {
+    return Ok((None, None, None));
+  };
+  let bytes = fs::read(&info_path).map_err(|error| error.to_string())?;
+  let info: serde_json::Value = match serde_json::from_slice(&bytes) {
+    Ok(value) => value,
+    Err(_) => return Ok((None, None, None)),
+  };
+  let field = |key: &str| -> Option<String> {
+    info
+      .get(key)
+      .and_then(|value| value.as_str())
+      .map(str::trim)
+      .filter(|value| !value.is_empty())
+      .map(str::to_string)
+  };
+
+  let title = field("title");
+  let author = field("author");
+  let kind = field("category");
+  let status = field("status");
+  let intro = field("intro");
+
+  let summary = {
+    let mut head: Vec<String> = Vec::new();
+    if let Some(author) = author.clone() {
+      head.push(author);
+    }
+    if let Some(kind) = kind.clone() {
+      head.push(kind);
+    }
+    if let Some(status) = status.clone() {
+      head.push(status);
+    }
+    match (head.is_empty(), intro) {
+      (true, None) => None,
+      (true, Some(intro)) => Some(intro),
+      (false, None) => Some(head.join(" · ")),
+      (false, Some(intro)) => Some(format!("{} — {}", head.join(" · "), intro)),
+    }
+  };
+
+  let mut tags: Vec<String> = vec!["小说".to_string()];
+  for value in [author, kind, status].into_iter().flatten() {
+    if !tags.iter().any(|existing| existing == &value) {
+      tags.push(value);
+    }
+  }
+
+  Ok((title, summary, Some(tags)))
 }
 
 /// 添加漫画章节：把拖入的 zip/文件夹/图片解压归入某本漫画的某个章节。
@@ -3854,7 +3973,7 @@ mod startup_profile_tests {
   use super::*;
   #[test]
   fn migrates_storage_once_without_copying_cache_or_mutating_legacy() {
-    let root = PathBuf::from("D:/CatLibrary-update-test").join(format!("migration-test-{}-{}", std::process::id(), now_timestamp()));
+    let root = std::env::temp_dir().join(format!("migration-test-{}-{}", std::process::id(), now_timestamp()));
     let legacy = root.join("webview-data/EBWebView/Default");
     fs::create_dir_all(legacy.join("Local Storage/leveldb")).unwrap();
     fs::create_dir_all(legacy.join("Cache")).unwrap();
@@ -5389,4 +5508,60 @@ fn rename_library_item(
     Some(trimmed.to_string())
   };
   write_library_metadata(&app, &root, &metadata)
+}
+
+#[cfg(test)]
+mod novel_ingest_tests {
+  use super::*;
+
+  #[test]
+  fn moves_cover_and_parses_intro() {
+    let root = std::env::temp_dir().join(format!("catlib-novel-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let group = root.join("novels").join("novel_9");
+    let source = group.join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("封面.jpg"), vec![9u8; 32]).expect("cover");
+    fs::write(source.join("book.txt"), "正文".as_bytes()).expect("txt");
+    fs::write(
+      source.join("简介.json"),
+      r#"{"title":"测试书","author":"张三","category":"科幻","status":"连载","intro":"一句话简介"}"#,
+    )
+    .expect("intro");
+
+    let (title, summary, tags) = ingest_novel_extras(&group, &source).expect("ingest");
+
+    assert_eq!(title.as_deref(), Some("测试书"));
+    let summary = summary.expect("summary");
+    assert!(summary.contains("张三"));
+    assert!(summary.contains("一句话简介"));
+    let tags = tags.expect("tags");
+    assert!(tags.iter().any(|tag| tag == "小说"));
+    assert!(tags.iter().any(|tag| tag == "张三"));
+
+    // 封面已经挪到 cover/，正文与简介留在 source/
+    assert!(group.join("cover").join("cover.jpg").is_file());
+    assert!(!source.join("封面.jpg").exists());
+    assert!(source.join("book.txt").is_file());
+    assert!(source.join("简介.json").is_file());
+
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn tolerates_missing_extras() {
+    let root = std::env::temp_dir().join(format!("catlib-novel-plain-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let group = root.join("novels").join("novel_8");
+    let source = group.join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("book.txt"), "正文".as_bytes()).expect("txt");
+
+    let (title, summary, tags) = ingest_novel_extras(&group, &source).expect("ingest");
+    assert!(title.is_none());
+    assert!(summary.is_none());
+    assert!(tags.is_none());
+
+    let _ = fs::remove_dir_all(&root);
+  }
 }
